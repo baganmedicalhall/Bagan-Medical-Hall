@@ -20,19 +20,31 @@ const Auth = {
   loginMode: 'staff', // 'staff' or 'developer'
 
   init() {
-    // Check saved session
-    const saved = localStorage.getItem(AUTH_STORAGE_KEY) || sessionStorage.getItem(AUTH_STORAGE_KEY)
-               || localStorage.getItem(LEGACY_AUTH_STORAGE_KEY) || sessionStorage.getItem(LEGACY_AUTH_STORAGE_KEY);
+    // Purge any stale legacy session keys from previous sessions
+    try {
+      localStorage.removeItem(LEGACY_AUTH_STORAGE_KEY);
+      sessionStorage.removeItem(LEGACY_AUTH_STORAGE_KEY);
+      localStorage.removeItem('apex_rx_active_session_v1');
+    } catch (_) {}
+
+    // Check current active session only
+    const saved = localStorage.getItem(AUTH_STORAGE_KEY) || sessionStorage.getItem(AUTH_STORAGE_KEY);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         const matched = (pharmacyDB.data.staffMembers || []).find(s => s.id === parsed.id && s.status === 'active');
         if (matched) {
           this.currentUser = matched;
+        } else {
+          this.currentUser = null;
+          this.clearStoredSession();
         }
       } catch (e) {
-        console.warn('Session parse error', e);
+        this.currentUser = null;
+        this.clearStoredSession();
       }
+    } else {
+      this.currentUser = null;
     }
 
     if (!this.currentUser) {
@@ -40,6 +52,18 @@ const Auth = {
     } else {
       this.applyUserSession();
     }
+  },
+
+  clearStoredSession() {
+    try {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      sessionStorage.removeItem(AUTH_STORAGE_KEY);
+      localStorage.removeItem(LEGACY_AUTH_STORAGE_KEY);
+      sessionStorage.removeItem(LEGACY_AUTH_STORAGE_KEY);
+      localStorage.removeItem('apex_rx_active_session_v1');
+      localStorage.removeItem('bagan_active_session_v1');
+      sessionStorage.clear();
+    } catch (_) {}
   },
 
   isLoggedIn() {
@@ -92,11 +116,19 @@ const Auth = {
 
   logout() {
     this.currentUser = null;
-    localStorage.removeItem(AUTH_STORAGE_KEY);
-    sessionStorage.removeItem(AUTH_STORAGE_KEY);
+    this.clearStoredSession();
     this.loginMode = 'staff';
+    if (typeof App !== 'undefined') {
+      App.currentView = 'pos';
+    }
+
+    const appEl = document.getElementById('app-container');
+    if (appEl) appEl.style.display = 'none';
+
     this.showLogin();
-    App.showToast('Logged out successfully', 'info');
+    if (typeof App !== 'undefined' && App.showToast) {
+      App.showToast('Logged out successfully. Access has been reset.', 'info');
+    }
   },
 
   showLogin() {
@@ -327,7 +359,7 @@ const Auth = {
 
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
             <label style="display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: #475569; cursor: pointer;">
-              <input type="checkbox" id="login-remember" checked> Remember session
+              <input type="checkbox" id="login-remember"> Keep me signed in on this device
             </label>
             <span style="font-size: 0.74rem; color: ${accentColor}; font-weight: 600;">Secure Portal</span>
           </div>
