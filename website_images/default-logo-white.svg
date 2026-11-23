@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- White Pharmacy Logo: Optimized for Dark Backgrounds (Sidebar, Dark Headers) -->
+  <path d="M42 8 H58 V24 H74 V40 H58 V56 H42 V40 H26 V24 H42 Z" fill="#ffffff" fill-opacity="0.25" />
+  <path d="M26 84 V24 H48 C60 24 68 31 68 41 C68 51 60 58 48 58 H26 M44 58 L68 84" fill="none" stroke="#ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" />
+  <line x1="60" y1="62" x2="82" y2="84" stroke="#ffffff" stroke-width="9" stroke-linecap="round" stroke-opacity="0.85" />
+  <line x1="82" y1="62" x2="60" y2="84" stroke="#ffffff" stroke-width="9" stroke-linecap="round" stroke-opacity="0.85" />
+</svg>
