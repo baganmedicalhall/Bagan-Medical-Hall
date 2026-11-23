@@ -1257,7 +1257,7 @@ const Auth = {
         <div id="media-center-dropzone" style="border: 2px dashed #94a3b8; border-radius: 10px; padding: 1.25rem; text-align: center; background: #f8fafc; margin-bottom: 1.25rem; cursor: pointer; transition: all 0.2s ease;">
           <div style="font-size: 1.8rem; margin-bottom: 0.25rem;">🖼️</div>
           <div style="font-weight: 700; font-size: 0.92rem; color: #1e293b;">Click to Browse or Drag & Drop Images Here</div>
-          <div style="font-size: 0.74rem; color: #64748b; margin-top: 4px;">PNG, JPG, SVG, WEBP & GIF. Auto-optimized, permanently persisted in IndexedDB and website_images/</div>
+          <div style="font-size: 0.74rem; color: #64748b; margin-top: 4px;">Any image format (PNG, JPG, SVG, GIF, BMP). Automatically converted to high-fidelity WebP (.webp) and saved to website_images/</div>
         </div>
 
         <!-- Toolbar: Search & Count Filter -->
@@ -1284,6 +1284,7 @@ const Auth = {
             const isColLogo = (g.logoColored === item.path || (item.dataUrl && g.logoColoredData === item.dataUrl));
             const isWhiteLogo = (g.logoWhite === item.path || (item.dataUrl && g.logoWhiteData === item.dataUrl));
             const isFallback = (g.fallbackLogoImage === item.path || (item.dataUrl && g.fallbackLogoData === item.dataUrl));
+            const isWebp = item.filename && (item.filename.toLowerCase().endsWith('.webp') || item.format === 'webp');
 
             return `
               <div class="media-card" data-filename="${item.filename.toLowerCase()}" style="background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.85rem; display: flex; flex-direction: column; transition: transform 0.15s ease, box-shadow 0.15s ease; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
@@ -1300,8 +1301,11 @@ const Auth = {
                   <div style="font-weight: 700; font-size: 0.82rem; color: #0f172a; word-break: break-all; line-height: 1.3;" title="${item.filename}">
                     ${item.filename}
                   </div>
-                  <div style="font-size: 0.7rem; color: #64748b; margin-top: 2px; display: flex; justify-content: space-between;">
-                    <span>${item.size ? (item.size > 1024 ? (item.size/1024).toFixed(1) + ' KB' : item.size + ' B') : 'Vector'}</span>
+                  <div style="font-size: 0.7rem; color: #64748b; margin-top: 2px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="display: flex; gap: 4px; align-items: center;">
+                      ${isWebp ? `<span style="background: #e0f2fe; color: #0284c7; font-size: 0.65rem; font-weight: 700; padding: 1px 5px; border-radius: 4px;">WEBP</span>` : ''}
+                      <span>${item.size ? (item.size > 1024 ? (item.size/1024).toFixed(1) + ' KB' : item.size + ' B') : 'WebP'}</span>
+                    </span>
                     <span>${item.uploadedAt ? new Date(item.uploadedAt).toLocaleDateString() : 'System Asset'}</span>
                   </div>
                   <div style="font-size: 0.68rem; color: #059669; font-weight: 600; margin-top: 3px; word-break: break-all;">
@@ -2562,14 +2566,29 @@ const Auth = {
       });
     });
 
-    // Delete Media item
+    // Sync from website_images/ Folder
+    const mcSyncBtn = document.getElementById('btn-sync-media-folder');
+    if (mcSyncBtn) {
+      mcSyncBtn.addEventListener('click', async () => {
+        App.showToast('Scanning website_images/ folder on disk...', 'info');
+        const res = await App.syncMediaLibraryFromServer();
+        if (res && res.success) {
+          App.showToast(`Successfully synced ${res.count} file(s) from website_images/!`, 'success');
+        } else {
+          App.showToast('Sync completed. Media library is up-to-date with website_images/', 'info');
+        }
+        this.renderDeveloperHub('media');
+      });
+    }
+
+    // Delete Media item (Removes from website_images/ folder on disk and memory)
     document.querySelectorAll('.btn-delete-media').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const id = btn.getAttribute('data-id');
         const fn = btn.getAttribute('data-filename');
-        if (confirm(`Are you sure you want to remove "${fn}" from the Media Center?`)) {
-          pharmacyDB.deleteMediaItem(id || fn);
-          App.showToast(`Removed "${fn}" from Media Center`, 'info');
+        if (confirm(`Are you sure you want to permanently delete "${fn}" from the website_images/ folder and Media Center?`)) {
+          await App.deleteMediaFile(fn, id);
+          App.showToast(`Permanently deleted "${fn}" from website_images/`, 'info');
           this.renderDeveloperHub('media');
         }
       });

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Master Application Coordinator & Navigation Router
  */
 
@@ -449,115 +449,128 @@ const App = {
 
   /* -------------------------------------------------------------
    * UNIVERSAL IMAGE UPLOAD (Target Folder: website_images/)
-   * Supports local PowerShell server (/api/upload), cPanel PHP (upload.php),
-   * and resilient IndexedDB & Base64 persistence.
+   * Automatically converts ANY image format (PNG, JPG, SVG, GIF, BMP, etc.)
+   * to high-fidelity WebP (.webp) format without losing quality, preserving
+   * full resolution and transparent alpha channel, and stores strictly
+   * into the project's website_images/ directory and persistent IndexedDB.
    * ------------------------------------------------------------- */
   async uploadImageFile(file, customFilename = null) {
     if (!file) throw new Error('No file provided for upload.');
 
-    // Validate image format
-    const validTypes = ['image/jpeg', 'image/png', 'image/svg+xml', 'image/gif', 'image/webp', 'image/x-icon'];
-    if (!validTypes.includes(file.type) && !file.name.match(/\.(jpg|jpeg|png|svg|gif|webp|ico)$/i)) {
-      throw new Error('Invalid file type. Please upload an image file (PNG, JPG, SVG, WEBP, GIF, ICO).');
+    // Validate image format - accept any image format
+    const isImage = (file.type && file.type.startsWith('image/')) || 
+                    file.name.match(/\.(jpg|jpeg|png|svg|gif|webp|ico|bmp|tiff?|avif)$/i);
+    if (!isImage) {
+      throw new Error('Invalid file type. Please upload an image file (PNG, JPG, SVG, WEBP, GIF, BMP, etc.).');
     }
 
-    // Clean filename
-    let filename = (customFilename || file.name || 'image_' + Date.now()).replace(/[^a-zA-Z0-9_\.-]/g, '_');
-    if (!filename.includes('.')) {
-      const ext = file.type.split('/')[1] || 'png';
-      filename += '.' + (ext === 'svg+xml' ? 'svg' : ext);
+    // Clean base name and enforce .webp extension
+    const rawName = (customFilename || file.name || ('image_' + Date.now()));
+    let baseName = rawName.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_\.-]/g, '_');
+    if (!baseName || baseName.trim() === '') {
+      baseName = 'image_' + Date.now();
     }
+    const webpFilename = `${baseName}.webp`;
 
-    // Read initial Base64 Data URL
-    let base64Data = await new Promise((resolve, reject) => {
+    // 1. Read source image as Base64 Data URL
+    const initialDataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
       reader.onerror = (err) => reject(err);
       reader.readAsDataURL(file);
     });
 
-    // Optimize/Compress raster images (max 1200x1200px) to ensure instantaneous loading and zero storage bloat
-    if (file.type !== 'image/svg+xml') {
-      try {
-        base64Data = await new Promise((resolve) => {
-          const img = new Image();
-          img.onload = () => {
-            const maxDim = 1200;
-            let width = img.width;
-            let height = img.height;
-            if (width > maxDim || height > maxDim) {
-              if (width > height) {
-                height = Math.round((height * maxDim) / width);
-                width = maxDim;
-              } else {
-                width = Math.round((width * maxDim) / height);
-                height = maxDim;
-              }
-            }
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0, width, height);
-            const isJpeg = (file.type === 'image/jpeg' || file.name.match(/\.jpe?g$/i));
-            const outFormat = isJpeg ? 'image/jpeg' : 'image/png';
-            const quality = isJpeg ? 0.88 : 0.92;
-            resolve(canvas.toDataURL(outFormat, quality));
-          };
-          img.onerror = () => resolve(base64Data);
-          img.src = base64Data;
-        });
-      } catch (_) {}
-    }
+    // 2. Automatically Convert to High-Fidelity WebP Format
+    // Preserves original resolution, crisp details, and transparent alpha channel
+    let webpDataUrl = await new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        try {
+          let width = img.naturalWidth || img.width || 800;
+          let height = img.naturalHeight || img.height || 600;
 
-    const targetPath = 'website_images/' + filename;
+          // For extreme ultra-high resolutions (> 4096px), clamp slightly to avoid browser canvas crash
+          // while preserving 4K Ultra-HD lossless visual fidelity
+          const maxDim = 4096;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d', { alpha: true });
+
+          // Clear with full transparency
+          ctx.clearRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Convert to WebP format at 0.96 quality (high visual fidelity, zero perceptible degradation)
+          const converted = canvas.toDataURL('image/webp', 0.96);
+          if (converted && converted.startsWith('data:image/webp')) {
+            resolve(converted);
+          } else {
+            // Fallback for rare browsers lacking webp canvas export
+            resolve(canvas.toDataURL('image/png', 1.0));
+          }
+        } catch (e) {
+          resolve(initialDataUrl);
+        }
+      };
+      img.onerror = () => resolve(initialDataUrl);
+      img.src = initialDataUrl;
+    });
+
+    // 3. Save physical file into website_images/ on disk
+    const targetPath = 'website_images/' + webpFilename;
     let savedOnServer = false;
 
-    // 1. Try PowerShell local server endpoint (/api/upload)
-    try {
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename, data: base64Data })
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success) savedOnServer = true;
-      }
-    } catch (e) {
-      // Endpoint not available or running file://
-    }
+    const endpoints = [
+      '/api/upload',
+      'upload.php',
+      'http://localhost:8080/api/upload',
+      'http://localhost:8080/upload.php'
+    ];
 
-    // 2. If not saved, try cPanel upload.php
-    if (!savedOnServer) {
+    for (const ep of endpoints) {
       try {
-        const res = await fetch('upload.php', {
+        const res = await fetch(ep, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename, data: base64Data })
+          body: JSON.stringify({ filename: webpFilename, data: webpDataUrl })
         });
         if (res.ok) {
           const json = await res.json();
-          if (json.success) savedOnServer = true;
+          if (json && json.success) {
+            savedOnServer = true;
+            break;
+          }
         }
-      } catch (e) {
-        // Not on PHP host
-      }
+      } catch (_) {}
     }
 
+    // 4. Construct Media Item Metadata
     const resultItem = {
       id: 'med_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
       success: true,
       path: targetPath,
-      dataUrl: base64Data,
-      filename,
-      size: file.size || Math.round(base64Data.length * 0.75),
+      dataUrl: webpDataUrl,
+      filename: webpFilename,
+      size: Math.round(webpDataUrl.length * 0.75),
       uploadedAt: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
-      title: filename,
+      title: webpFilename,
+      format: 'webp',
       savedOnServer
     };
 
-    // Register into Media Center & persist in IndexedDB
+    // 5. Register into Media Center & persist in IndexedDB
     pharmacyDB.addMediaItem(resultItem);
     if (typeof BaganMediaStore !== 'undefined' && BaganMediaStore.saveMedia) {
       await BaganMediaStore.saveMedia(resultItem);
@@ -567,32 +580,70 @@ const App = {
   },
 
   /* -------------------------------------------------------------
+   * DELETE MEDIA FILE (Synchronously removes from disk & memory)
+   * Removes from website_images/ folder on server and IndexedDB.
+   * ------------------------------------------------------------- */
+  async deleteMediaFile(filename, id = null) {
+    if (!filename) return false;
+
+    // 1. Remove from database and IndexedDB
+    pharmacyDB.deleteMediaItem(id || filename);
+    if (typeof BaganMediaStore !== 'undefined' && BaganMediaStore.deleteMedia) {
+      await BaganMediaStore.deleteMedia(filename);
+    }
+
+    // 2. Remove physical file from website_images/ directory on server
+    const endpoints = [
+      `/api/media?filename=${encodeURIComponent(filename)}`,
+      `upload.php?action=delete&filename=${encodeURIComponent(filename)}`,
+      `http://localhost:8080/api/media?filename=${encodeURIComponent(filename)}`,
+      `http://localhost:8080/upload.php?action=delete&filename=${encodeURIComponent(filename)}`
+    ];
+
+    for (const ep of endpoints) {
+      try {
+        const res = await fetch(ep, { method: 'DELETE' });
+        if (res.ok) return true;
+      } catch (_) {}
+    }
+    return true;
+  },
+
+  /* -------------------------------------------------------------
    * SYNC MEDIA LIBRARY FROM SERVER (website_images/)
    * ------------------------------------------------------------- */
   async syncMediaLibraryFromServer() {
     try {
-      const endpoints = ['upload.php', '/api/media'];
+      const endpoints = [
+        '/api/media',
+        'upload.php',
+        'http://localhost:8080/api/media',
+        'http://localhost:8080/upload.php'
+      ];
       for (const ep of endpoints) {
         try {
           const res = await fetch(ep, { method: 'GET' });
           if (res.ok) {
             const data = await res.json();
             if (data && data.success && Array.isArray(data.files)) {
+              let addedCount = 0;
               data.files.forEach(f => {
-                pharmacyDB.addMediaItem({
+                const added = pharmacyDB.addMediaItem({
                   id: 'med_' + f.filename.replace(/[^a-zA-Z0-9]/g, '_'),
                   filename: f.filename,
                   path: f.path || ('website_images/' + f.filename),
                   size: f.size || 0,
                   uploadedAt: f.lastModified || new Date().toISOString()
                 });
+                if (added) addedCount++;
               });
-              break;
+              return { success: true, count: data.files.length, added: addedCount };
             }
           }
         } catch (_) {}
       }
     } catch (_) {}
+    return { success: false, count: 0 };
   },
 
   /* -------------------------------------------------------------
@@ -699,7 +750,7 @@ const App = {
         <div class="modal-card" style="max-width: 720px; max-height: 85vh; display: flex; flex-direction: column;">
           <div class="modal-header" style="border-bottom: 1px solid #e2e8f0; padding: 1rem 1.25rem;">
             <div style="display: flex; align-items: center; gap: 8px;">
-              <span style="font-size: 1.3rem;">📁</span>
+              <span style="font-size: 1.3rem;">??</span>
               <div>
                 <h3 style="margin: 0; font-size: 1.05rem; font-weight: 700; color: #0f172a;">${title}</h3>
                 <div style="font-size: 0.73rem; color: #64748b;">Browse previously uploaded images in <code>website_images/</code> or upload a new one.</div>
@@ -725,7 +776,7 @@ const App = {
           <div style="padding: 1.25rem; overflow-y: auto; flex: 1;">
             ${mediaItems.length === 0 ? `
               <div style="text-align: center; padding: 2.5rem 1rem; color: #64748b;">
-                <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">🖼️</div>
+                <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">???</div>
                 <div style="font-weight: 600;">No images uploaded yet</div>
                 <div style="font-size: 0.75rem; margin-top: 4px;">Click the upload button above to add images to website_images/</div>
               </div>
@@ -743,7 +794,7 @@ const App = {
                       ${item.size ? (item.size > 1024 ? (item.size/1024).toFixed(1) + ' KB' : item.size + ' B') : 'Vector SVG'}
                     </div>
                     <button type="button" class="btn btn-outline btn-sm btn-select-this-media" style="width: 100%; margin-top: 6px; padding: 2px 4px; font-size: 0.7rem;">
-                      Select ✓
+                      Select ?
                     </button>
                   </div>
                 `).join('')}

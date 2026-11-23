@@ -49,7 +49,7 @@ while ($listener.IsListening) {
 
         # Add CORS headers
         $response.AddHeader("Access-Control-Allow-Origin", "*")
-        $response.AddHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        $response.AddHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         $response.AddHeader("Access-Control-Allow-Headers", "Content-Type")
 
         if ($request.HttpMethod -eq "OPTIONS") {
@@ -88,7 +88,32 @@ while ($listener.IsListening) {
             continue
         }
 
-        # Handle Image Upload API Endpoint
+        # Handle Media Delete API Endpoint
+        if (($request.HttpMethod -eq "DELETE" -or ($request.HttpMethod -eq "GET" -and $request.QueryString["action"] -eq "delete") -or ($request.HttpMethod -eq "POST" -and $request.QueryString["action"] -eq "delete")) -and ($urlPath -eq "/api/media" -or $urlPath -eq "/upload.php")) {
+            $filenameParam = $request.QueryString["filename"]
+            $resObj = @{ success = $false; message = "Filename parameter required" }
+            if ($filenameParam) {
+                $safeName = [System.IO.Path]::GetFileName($filenameParam)
+                $targetFile = Join-Path $imageDir $safeName
+                if (Test-Path $targetFile -PathType Leaf) {
+                    Remove-Item $targetFile -Force -ErrorAction SilentlyContinue
+                    $resObj = @{ success = $true; message = "File deleted successfully"; filename = $safeName }
+                } else {
+                    $resObj = @{ success = $true; message = "File not found or already deleted"; filename = $safeName }
+                }
+            }
+
+            $delJson = $resObj | ConvertTo-Json
+            $delBytes = [System.Text.Encoding]::UTF8.GetBytes($delJson)
+            $response.ContentType = "application/json; charset=utf-8"
+            $response.ContentLength64 = $delBytes.Length
+            $response.StatusCode = 200
+            $response.OutputStream.Write($delBytes, 0, $delBytes.Length)
+            $response.Close()
+            continue
+        }
+
+        # Handle Image Upload API Endpoint (Enforces .webp conversion & storage)
         if ($request.HttpMethod -eq "POST" -and ($urlPath -eq "/api/upload" -or $urlPath -eq "/upload.php")) {
             $reader = New-Object System.IO.StreamReader($request.InputStream, $request.ContentEncoding)
             $body = $reader.ReadToEnd()
@@ -99,10 +124,13 @@ while ($listener.IsListening) {
             try {
                 $payload = $body | ConvertFrom-Json
                 if ($payload -and $payload.filename -and $payload.data) {
-                    $cleanName = [System.IO.Path]::GetFileName($payload.filename) -replace '[^a-zA-Z0-9_\.-]', '_'
-                    if ([string]::IsNullOrWhiteSpace([System.IO.Path]::GetExtension($cleanName))) {
-                        $cleanName = "$cleanName.png"
+                    $rawBase = [System.IO.Path]::GetFileNameWithoutExtension($payload.filename)
+                    $cleanBase = $rawBase -replace '[^a-zA-Z0-9_\.-]', '_'
+                    if ([string]::IsNullOrWhiteSpace($cleanBase)) {
+                        $cleanBase = "image_" + (Get-Date -Format "yyyyMMddHHmmss")
                     }
+                    # Automatically enforce .webp extension
+                    $cleanName = "$cleanBase.webp"
 
                     $targetPath = Join-Path $imageDir $cleanName
                     $dataStr = [string]$payload.data
@@ -118,6 +146,7 @@ while ($listener.IsListening) {
                         path     = "website_images/$cleanName"
                         filename = $cleanName
                         size     = $bytes.Length
+                        format   = "webp"
                     }
                 }
             } catch {
