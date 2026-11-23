@@ -448,10 +448,10 @@ const DEFAULT_CUSTOMERS = [
 const DEFAULT_SUPPLIERS = [
   {
     id: 'SUP-01',
-    name: 'Apex Pharmaceuticals Distribution',
+    name: 'Bagan Pharmaceuticals Distribution',
     contactPerson: 'Alex Turner',
     phone: '555-9100',
-    email: 'orders@apexpharma.com',
+    email: 'orders@baganpharma.com',
     address: '400 Industrial Parkway, Metro Hub',
     drugLicenseNo: 'DL-PH-2024-9941',
     taxId: 'TAX-78491-G',
@@ -508,8 +508,8 @@ const DEFAULT_JOURNAL_ENTRIES = [
     id: 'JRN-1002',
     date: '2026-11-05',
     voucherType: 'Purchase Voucher',
-    reference: 'BILL-APEX-492',
-    narration: 'Stock purchase on credit from Apex Pharmaceuticals',
+    reference: 'BILL-BMH-492',
+    narration: 'Stock purchase on credit from Bagan Pharmaceuticals',
     supplierId: 'SUP-01',
     entries: [
       { accountId: '1040', accountName: 'Pharmacy Inventory / Stock Asset', debit: 2333.33, credit: 0 },
@@ -657,12 +657,12 @@ const DEFAULT_STAFF = [
   {
     id: 'staff_dev',
     username: 'developer',
-    aliases: ['dev', 'dev@apexrx.com', 'admin'],
+    aliases: ['dev', 'dev@baganmedicalhall.com', 'admin'],
     password: 'dev123',
     name: 'Dev Kumar Rajbanshi',
     role: 'developer',
     roleTitle: 'Lead Developer & Super Admin',
-    email: 'dev@apexrx.com',
+    email: 'dev@baganmedicalhall.com',
     phone: '+977-9800000000',
     status: 'active',
     avatar: '💻',
@@ -686,12 +686,12 @@ const DEFAULT_STAFF = [
   {
     id: 'staff_pharmacist_1',
     username: 'pharmacist',
-    aliases: ['user', 'staff', 'sarah', 'user@apexrx.com'],
+    aliases: ['user', 'staff', 'sarah', 'user@baganmedicalhall.com'],
     password: 'user123',
     name: 'Sarah Jenkins, RPh',
     role: 'pharmacist',
     roleTitle: 'Staff Pharmacist',
-    email: 'sarah.j@apexrx.com',
+    email: 'sarah.j@baganmedicalhall.com',
     phone: '555-0341',
     status: 'active',
     avatar: '🧑‍⚕️',
@@ -859,13 +859,13 @@ const DEFAULT_DAILY_DRAWER_CLOSINGS = {
 
 // Universal (Global) Pharmacy Information - Editable in Developer Hub
 const DEFAULT_GLOBAL_SETTINGS = {
-  name: 'Apex Health & Care Pharmacy',
-  contacts: '+1 (555) 342-8800 | dispensary@apexhealthrx.com',
+  name: 'Bagan Medical Hall',
+  contacts: '+1 (555) 342-8800 | admin.baganmedicalhall@gmail.com',
   phone: '+1 (555) 342-8800',
-  email: 'dispensary@apexhealthrx.com',
+  email: 'admin.baganmedicalhall@gmail.com',
   address: '104 Healthcare Avenue, Medical District, Suite 101',
   tagline: 'Your Trusted Pharmacy & Clinical Dispensary',
-  logo: 'Rx', // text emblem
+  logo: 'BMH', // text emblem
   logoType: 'image', // 'image' or 'text'
   logoColored: 'website_images/default-logo-colored.svg', // Coloured logo for light backgrounds (receipts, white card)
   logoColoredData: '',
@@ -878,29 +878,29 @@ const DEFAULT_GLOBAL_SETTINGS = {
   logoData: '',
   primaryColor: '#0284c7',
   secondaryColor: '#0f766e',
-  greetingMessage: 'Welcome to Apex Rx Dispensary. Please verify temperature logs and prescriptions carefully.'
+  greetingMessage: 'Welcome to Bagan Medical Hall. Please verify temperature logs and prescriptions carefully.'
 };
 
 // Developer Editable Settings for Login Page & Staff UI
 const DEFAULT_LOGIN_PAGE_SETTINGS = {
-  brandName: 'Apex Health & Care Pharmacy',
+  brandName: 'Bagan Medical Hall',
   tagline: 'Your Trusted Pharmacy & Clinical Dispensary',
-  announcement: 'Welcome to Apex Rx Dispensary. Please verify temperature logs and prescriptions carefully.',
-  logoText: 'Rx',
+  announcement: 'Welcome to Bagan Medical Hall. Please verify temperature logs and prescriptions carefully.',
+  logoText: 'BMH',
   logoImage: 'website_images/default-logo.svg',
   logoType: 'image',
-  showTestCredentials: true,
+  showTestCredentials: false,
   primaryColor: '#0284c7',
   secondaryColor: '#0f766e',
   accentColor: '#0284c7'
 };
 
 const DEFAULT_STAFF_UI_SETTINGS = {
-  appTitle: 'Apex Pharmacy',
+  appTitle: 'Bagan Medical Hall',
   defaultView: 'pos',
   maxDiscountPercent: 15,
   requireDoctorForRx: true,
-  thermalReceiptFooter: 'Thank you for choosing Apex Health & Care Pharmacy!',
+  thermalReceiptFooter: 'Thank you for choosing Bagan Medical Hall!',
   enableHoldTickets: true
 };
 
@@ -1039,11 +1039,138 @@ const DEFAULT_CREDIT_COLLECTIONS = [
   }
 ];
 
+/* -------------------------------------------------------------
+ * BAGAN MEDIA STORE - Resilient IndexedDB Binary/Image Database
+ * Stores high-res images, data URLs, and blobs persistently
+ * with zero size constraints across all browsers and file:// protocol.
+ * ------------------------------------------------------------- */
+const BaganMediaStore = {
+  dbName: 'BaganMedicalHallMediaDB',
+  storeName: 'media_files',
+  db: null,
+
+  async openDB() {
+    if (this.db) return this.db;
+    return new Promise((resolve) => {
+      try {
+        if (typeof indexedDB === 'undefined') return resolve(null);
+        const req = indexedDB.open(this.dbName, 1);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains(this.storeName)) {
+            db.createObjectStore(this.storeName, { keyPath: 'filename' });
+          }
+        };
+        req.onsuccess = (e) => {
+          this.db = e.target.result;
+          resolve(this.db);
+        };
+        req.onerror = () => resolve(null);
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  },
+
+  async saveMedia(item) {
+    if (!item || !item.filename) return;
+    try {
+      const db = await this.openDB();
+      if (!db) {
+        if (item.dataUrl && item.dataUrl.length < 500000) {
+          try { localStorage.setItem('bmh_img_' + item.filename, item.dataUrl); } catch (_) {}
+        }
+        return;
+      }
+      return new Promise((resolve) => {
+        const tx = db.transaction(this.storeName, 'readwrite');
+        const store = tx.objectStore(this.storeName);
+        store.put(item);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    } catch (_) {}
+  },
+
+  async getMedia(filename) {
+    if (!filename) return null;
+    try {
+      const db = await this.openDB();
+      if (!db) {
+        const fb = localStorage.getItem('bmh_img_' + filename);
+        return fb ? { filename, dataUrl: fb } : null;
+      }
+      return new Promise((resolve) => {
+        const tx = db.transaction(this.storeName, 'readonly');
+        const store = tx.objectStore(this.storeName);
+        const req = store.get(filename);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+    } catch (_) {
+      return null;
+    }
+  },
+
+  async getAllMedia() {
+    try {
+      const db = await this.openDB();
+      if (!db) return [];
+      return new Promise((resolve) => {
+        const tx = db.transaction(this.storeName, 'readonly');
+        const store = tx.objectStore(this.storeName);
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      });
+    } catch (_) {
+      return [];
+    }
+  },
+
+  async deleteMedia(filename) {
+    if (!filename) return;
+    try {
+      const db = await this.openDB();
+      if (db) {
+        const tx = db.transaction(this.storeName, 'readwrite');
+        tx.objectStore(this.storeName).delete(filename);
+      }
+      try { localStorage.removeItem('bmh_img_' + filename); } catch (_) {}
+    } catch (_) {}
+  }
+};
+
 class PharmacyDatabase {
   constructor() {
     this.data = this.loadData();
     this.recalculateAllAccountBalances();
+    this.hydrateMediaLibrary();
     try { this.save(); } catch (e) {}
+  }
+
+  async hydrateMediaLibrary() {
+    try {
+      const stored = await BaganMediaStore.getAllMedia();
+      if (stored && stored.length > 0) {
+        if (!this.data.mediaLibrary) this.data.mediaLibrary = [];
+        stored.forEach(img => {
+          const idx = this.data.mediaLibrary.findIndex(m => m.filename === img.filename);
+          if (idx > -1) {
+            if (img.dataUrl) this.data.mediaLibrary[idx].dataUrl = img.dataUrl;
+          } else {
+            this.data.mediaLibrary.unshift(img);
+          }
+          // Hydrate global settings logo dataUrls if matching
+          const g = this.data.globalSettings;
+          if (g && img.dataUrl) {
+            if (g.logoColored === img.path || g.logoColored === img.filename) g.logoColoredData = img.dataUrl;
+            if (g.logoWhite === img.path || g.logoWhite === img.filename) g.logoWhiteData = img.dataUrl;
+            if (g.fallbackLogoImage === img.path || g.fallbackLogoImage === img.filename) g.fallbackLogoData = img.dataUrl;
+          }
+        });
+      }
+    } catch (_) {}
   }
 
   loadData() {
@@ -1054,6 +1181,17 @@ class PharmacyDatabase {
         if (!parsed.globalSettings) {
           parsed.globalSettings = JSON.parse(JSON.stringify(DEFAULT_GLOBAL_SETTINGS));
         } else {
+          // Automatic migration of legacy name to Bagan Medical Hall
+          if (!parsed.globalSettings.name || parsed.globalSettings.name.includes('Apex')) {
+            parsed.globalSettings.name = 'Bagan Medical Hall';
+          }
+          if (parsed.globalSettings.email && parsed.globalSettings.email.includes('apexhealthrx')) {
+            parsed.globalSettings.email = 'admin.baganmedicalhall@gmail.com';
+            parsed.globalSettings.contacts = '+1 (555) 342-8800 | admin.baganmedicalhall@gmail.com';
+          }
+          if (parsed.globalSettings.greetingMessage && parsed.globalSettings.greetingMessage.includes('Apex')) {
+            parsed.globalSettings.greetingMessage = 'Welcome to Bagan Medical Hall. Please verify temperature logs and prescriptions carefully.';
+          }
           if (!parsed.globalSettings.primaryColor) parsed.globalSettings.primaryColor = '#0284c7';
           if (!parsed.globalSettings.secondaryColor) parsed.globalSettings.secondaryColor = '#0f766e';
           if (!parsed.globalSettings.logoColored) parsed.globalSettings.logoColored = 'website_images/default-logo-colored.svg';
@@ -1102,9 +1240,32 @@ class PharmacyDatabase {
         }
         if (!parsed.loginPageSettings) {
           parsed.loginPageSettings = JSON.parse(JSON.stringify(DEFAULT_LOGIN_PAGE_SETTINGS));
+        } else {
+          parsed.loginPageSettings.showTestCredentials = false;
+          if (!parsed.loginPageSettings.brandName || parsed.loginPageSettings.brandName.includes('Apex')) {
+            parsed.loginPageSettings.brandName = 'Bagan Medical Hall';
+          }
+          if (parsed.loginPageSettings.announcement && parsed.loginPageSettings.announcement.includes('Apex')) {
+            parsed.loginPageSettings.announcement = 'Welcome to Bagan Medical Hall. Please verify temperature logs and prescriptions carefully.';
+          }
         }
         if (!parsed.staffUiSettings) {
           parsed.staffUiSettings = JSON.parse(JSON.stringify(DEFAULT_STAFF_UI_SETTINGS));
+        } else {
+          if (!parsed.staffUiSettings.appTitle || parsed.staffUiSettings.appTitle.includes('Apex')) {
+            parsed.staffUiSettings.appTitle = 'Bagan Medical Hall';
+          }
+          if (parsed.staffUiSettings.thermalReceiptFooter && parsed.staffUiSettings.thermalReceiptFooter.includes('Apex')) {
+            parsed.staffUiSettings.thermalReceiptFooter = 'Thank you for choosing Bagan Medical Hall!';
+          }
+        }
+        if (parsed.settings) {
+          if (!parsed.settings.pharmacyName || parsed.settings.pharmacyName.includes('Apex')) {
+            parsed.settings.pharmacyName = 'Bagan Medical Hall';
+          }
+          if (parsed.settings.email && parsed.settings.email.includes('apex')) {
+            parsed.settings.email = 'admin.baganmedicalhall@gmail.com';
+          }
         }
         if (!parsed.productCategories || !Array.isArray(parsed.productCategories)) {
           parsed.productCategories = JSON.parse(JSON.stringify(DEFAULT_PRODUCT_CATEGORIES));
@@ -1141,13 +1302,13 @@ class PharmacyDatabase {
   getDefaultData() {
     return {
       settings: {
-        pharmacyName: 'Apex Health & Care Pharmacy',
+        pharmacyName: 'Bagan Medical Hall',
         tagline: 'Your Trusted Pharmacy & Clinical Dispensary',
         licenseNo: 'PH-LIC-2026-449102',
         gstNumber: 'GSTIN-09AAACH7789F1Z4',
         address: '104 Healthcare Avenue, Medical District, Suite 101',
         phone: '+1 (555) 342-8800',
-        email: 'dispensary@apexhealthrx.com',
+        email: 'admin.baganmedicalhall@gmail.com',
         currency: '$',
         defaultTaxRate: 5,
         printThermal: true, // 80mm
@@ -1306,13 +1467,19 @@ class PharmacyDatabase {
     } else {
       this.data.mediaLibrary.unshift(item);
     }
+    if (item.dataUrl) {
+      BaganMediaStore.saveMedia(item);
+    }
     this.save();
     return item;
   }
 
   deleteMediaItem(idOrFilename) {
     if (!this.data.mediaLibrary) return;
+    const target = this.data.mediaLibrary.find(m => m.id === idOrFilename || m.filename === idOrFilename);
+    const fn = target ? target.filename : idOrFilename;
     this.data.mediaLibrary = this.data.mediaLibrary.filter(m => m.id !== idOrFilename && m.filename !== idOrFilename);
+    BaganMediaStore.deleteMedia(fn);
     this.save();
   }
 

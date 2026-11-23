@@ -10,6 +10,14 @@ const App = {
     const global = pharmacyDB.data.globalSettings || {};
     this.applyThemeColors(global.primaryColor || '#0284c7', global.secondaryColor || '#0f766e');
 
+    // Hydrate media assets from IndexedDB BaganMediaStore & server
+    if (typeof pharmacyDB !== 'undefined' && pharmacyDB.hydrateMediaLibrary) {
+      pharmacyDB.hydrateMediaLibrary().then(() => {
+        const brandLogo = document.querySelector('.brand-icon');
+        if (brandLogo) brandLogo.innerHTML = this.renderLogoHtml('dark');
+      });
+    }
+
     // Sync media assets from server website_images/
     this.syncMediaLibraryFromServer();
 
@@ -439,7 +447,7 @@ const App = {
   /* -------------------------------------------------------------
    * UNIVERSAL IMAGE UPLOAD (Target Folder: website_images/)
    * Supports local PowerShell server (/api/upload), cPanel PHP (upload.php),
-   * and resilient Base64 local storage fallback.
+   * and resilient IndexedDB & Base64 persistence.
    * ------------------------------------------------------------- */
   async uploadImageFile(file, customFilename = null) {
     if (!file) throw new Error('No file provided for upload.');
@@ -457,13 +465,47 @@ const App = {
       filename += '.' + (ext === 'svg+xml' ? 'svg' : ext);
     }
 
-    // Read Base64 Data URL
-    const base64Data = await new Promise((resolve, reject) => {
+    // Read initial Base64 Data URL
+    let base64Data = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
       reader.onerror = (err) => reject(err);
       reader.readAsDataURL(file);
     });
+
+    // Optimize/Compress raster images (max 1200x1200px) to ensure instantaneous loading and zero storage bloat
+    if (file.type !== 'image/svg+xml') {
+      try {
+        base64Data = await new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            const maxDim = 1200;
+            let width = img.width;
+            let height = img.height;
+            if (width > maxDim || height > maxDim) {
+              if (width > height) {
+                height = Math.round((height * maxDim) / width);
+                width = maxDim;
+              } else {
+                width = Math.round((width * maxDim) / height);
+                height = maxDim;
+              }
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            const isJpeg = (file.type === 'image/jpeg' || file.name.match(/\.jpe?g$/i));
+            const outFormat = isJpeg ? 'image/jpeg' : 'image/png';
+            const quality = isJpeg ? 0.88 : 0.92;
+            resolve(canvas.toDataURL(outFormat, quality));
+          };
+          img.onerror = () => resolve(base64Data);
+          img.src = base64Data;
+        });
+      } catch (_) {}
+    }
 
     const targetPath = 'website_images/' + filename;
     let savedOnServer = false;
@@ -501,24 +543,22 @@ const App = {
     }
 
     const resultItem = {
+      id: 'med_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
       success: true,
       path: targetPath,
       dataUrl: base64Data,
       filename,
-      size: file.size || 0,
+      size: file.size || Math.round(base64Data.length * 0.75),
+      uploadedAt: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
+      title: filename,
       savedOnServer
     };
 
-    // Automatically register into Media Center
-    pharmacyDB.addMediaItem({
-      id: 'med_' + Date.now(),
-      filename,
-      path: targetPath,
-      dataUrl: base64Data,
-      size: file.size || 0,
-      uploadedAt: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
-      title: filename
-    });
+    // Register into Media Center & persist in IndexedDB
+    pharmacyDB.addMediaItem(resultItem);
+    if (typeof BaganMediaStore !== 'undefined' && BaganMediaStore.saveMedia) {
+      await BaganMediaStore.saveMedia(resultItem);
+    }
 
     return resultItem;
   },
@@ -697,6 +737,8 @@ const App = {
             }
           } catch (err) {
             alert(err.message);
+          } finally {
+            fileInput.value = '';
           }
         }
       });

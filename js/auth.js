@@ -11,7 +11,8 @@
  *                 └── Database Management (Audit, Backup/Restore, Factory Reset)
  */
 
-const AUTH_STORAGE_KEY = 'apex_rx_active_session_v1';
+const AUTH_STORAGE_KEY = 'bagan_active_session_v1';
+const LEGACY_AUTH_STORAGE_KEY = 'apex_rx_active_session_v1';
 
 const Auth = {
   currentUser: null,
@@ -20,7 +21,8 @@ const Auth = {
 
   init() {
     // Check saved session
-    const saved = localStorage.getItem(AUTH_STORAGE_KEY) || sessionStorage.getItem(AUTH_STORAGE_KEY);
+    const saved = localStorage.getItem(AUTH_STORAGE_KEY) || sessionStorage.getItem(AUTH_STORAGE_KEY)
+               || localStorage.getItem(LEGACY_AUTH_STORAGE_KEY) || sessionStorage.getItem(LEGACY_AUTH_STORAGE_KEY);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -240,10 +242,10 @@ const Auth = {
     if (!container) return;
 
     const global = pharmacyDB.data.globalSettings || {
-      name: 'Apex Health & Care Pharmacy',
+      name: 'Bagan Medical Hall',
       tagline: 'Your Trusted Pharmacy & Clinical Dispensary',
-      logo: 'Rx',
-      greetingMessage: 'Welcome to Apex Rx Dispensary. Please verify temperature logs and prescriptions carefully.'
+      logo: 'BMH',
+      greetingMessage: 'Welcome to Bagan Medical Hall. Please verify temperature logs and prescriptions carefully.'
     };
     const pageSettings = pharmacyDB.data.loginPageSettings || {
       accentColor: '#0284c7',
@@ -273,7 +275,7 @@ const Auth = {
             ${isDevLogin ? '🛠️ DEVELOPER AUTHENTICATION' : '⚡ Tip: Click logo above for Developer Portal'}
           </div>
           <h1 style="font-size: 1.5rem; font-weight: 800; color: #0f172a; letter-spacing: -0.02em;">
-            ${global.name || 'Apex Health & Care Pharmacy'}
+            ${global.name || 'Bagan Medical Hall'}
           </h1>
           <p style="font-size: 0.85rem; color: #64748b;">
             ${global.tagline || 'Clinical POS, Inventory & Full Accounting ERP'}
@@ -305,12 +307,12 @@ const Auth = {
         <div id="login-error-alert" style="display: none; padding: 0.65rem 0.85rem; background: #fee2e2; border: 1px solid #fca5a5; border-radius: 8px; color: #dc2626; font-size: 0.82rem; margin-bottom: 1rem;"></div>
 
         <!-- Form -->
-        <form id="pharmacy-login-form">
+        <form id="pharmacy-login-form" autocomplete="off">
           <div class="form-group">
-            <label class="form-label">Username or Work Email</label>
+            <label class="form-label">${isDevLogin ? 'Developer Username or Email' : 'Staff Username or Email'}</label>
             <div class="login-input-wrap">
               <span class="login-input-icon">${getIcon('customers')}</span>
-              <input type="text" id="login-username" class="form-control login-input" placeholder="Enter username..." value="${isDevLogin ? devAcc.username : staffAcc.username}" required autofocus>
+              <input type="text" id="login-username" class="form-control login-input" placeholder="Enter username or email..." value="" autocomplete="off" required autofocus>
             </div>
           </div>
 
@@ -318,7 +320,7 @@ const Auth = {
             <label class="form-label">Password</label>
             <div class="login-input-wrap">
               <span class="login-input-icon">🔒</span>
-              <input type="password" id="login-password" class="form-control login-input" placeholder="Enter password..." value="${isDevLogin ? devAcc.password : staffAcc.password}" required>
+              <input type="password" id="login-password" class="form-control login-input" placeholder="Enter password..." value="" autocomplete="new-password" required>
               <button type="button" id="btn-toggle-password" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #94a3b8; font-size: 0.85rem;">👁️</button>
             </div>
           </div>
@@ -391,15 +393,33 @@ const Auth = {
       backStaffBtn.addEventListener('click', () => this.renderLoginForm('staff'));
     }
 
-    // Quick fill buttons
+    // Quick fill buttons (only fills upon explicit click)
     container.querySelectorAll('.quick-login-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const role = btn.getAttribute('data-role');
+        const uInput = document.getElementById('login-username');
+        const pInput = document.getElementById('login-password');
         if (role === 'developer') {
-          this.renderLoginForm('developer');
+          if (this.loginMode !== 'developer') {
+            this.renderLoginForm('developer');
+          }
+          const u = document.getElementById('login-username');
+          const p = document.getElementById('login-password');
+          if (u && p) {
+            u.value = devAcc.username;
+            p.value = devAcc.password;
+          }
         } else {
-          this.renderLoginForm('staff');
+          if (this.loginMode !== 'staff') {
+            this.renderLoginForm('staff');
+          }
+          const u = document.getElementById('login-username');
+          const p = document.getElementById('login-password');
+          if (u && p) {
+            u.value = staffAcc.username;
+            p.value = staffAcc.password;
+          }
         }
       });
     });
@@ -851,7 +871,7 @@ const Auth = {
                 <label class="form-label" style="margin-bottom: 4px;">Text Emblem Characters (Max 4)</label>
                 <div style="display: flex; align-items: center; gap: 0.75rem;">
                   <input type="text" id="glob-logo" class="form-control" value="${logoText}" maxlength="4" style="font-weight: 800; font-size: 1.15rem; text-align: center; width: 100px;">
-                  <span style="font-size: 0.75rem; color: #64748b;">e.g. Rx, APEX, +, RX+</span>
+                  <span style="font-size: 0.75rem; color: #64748b;">e.g. BMH, Rx, +, RX+</span>
                 </div>
               </div>
             </div>
@@ -904,7 +924,7 @@ const Auth = {
             <!-- SUB-CARD 4: UNIVERSAL STORE DETAILS -->
             <div class="form-group">
               <label class="form-label">Universal Pharmacy Name *</label>
-              <input type="text" id="glob-name" class="form-control" value="${g.name || 'Apex Health & Care Pharmacy'}" placeholder="e.g. Apex Health & Care Pharmacy" required>
+              <input type="text" id="glob-name" class="form-control" value="${g.name || 'Bagan Medical Hall'}" placeholder="e.g. Bagan Medical Hall" required>
             </div>
 
             <div class="form-group">
@@ -919,13 +939,13 @@ const Auth = {
               </div>
               <div class="form-group">
                 <label class="form-label">Official Email Address</label>
-                <input type="email" id="glob-email" class="form-control" value="${g.email || 'dispensary@apexhealthrx.com'}" placeholder="dispensary@apexhealthrx.com">
+                <input type="email" id="glob-email" class="form-control" value="${g.email || 'admin.baganmedicalhall@gmail.com'}" placeholder="admin.baganmedicalhall@gmail.com">
               </div>
             </div>
 
             <div class="form-group">
               <label class="form-label">Combined Contact Text (For Invoices & Receipts)</label>
-              <input type="text" id="glob-contacts" class="form-control" value="${g.contacts || ''}" placeholder="Ph: 555-342-8800 | dispensary@apexhealthrx.com">
+              <input type="text" id="glob-contacts" class="form-control" value="${g.contacts || ''}" placeholder="Ph: 555-342-8800 | admin.baganmedicalhall@gmail.com">
             </div>
 
             <div class="form-group">
@@ -959,7 +979,7 @@ const Auth = {
                   <img src="${logoWhiteData || logoWhitePath}" alt="White Logo" style="width: 100%; height: 100%; object-fit: contain; border: none; box-shadow: none;">
                 </div>
                 <div>
-                  <div style="font-weight: 700; font-size: 0.95rem; color: white;" id="prev-glob-name">${g.name || 'Apex Health & Care Pharmacy'}</div>
+                  <div style="font-weight: 700; font-size: 0.95rem; color: white;" id="prev-glob-name">${g.name || 'Bagan Medical Hall'}</div>
                   <div style="font-size: 0.72rem; color: #94a3b8;" id="prev-glob-tagline">${g.tagline || ''}</div>
                 </div>
               </div>
@@ -974,7 +994,7 @@ const Auth = {
                 <div id="prev-receipt-logo-wrap" style="text-align: center; margin-bottom: 4px;">
                   <img id="prev-receipt-logo" src="${logoColoredData || logoColoredPath}" alt="Coloured Logo" style="max-height: 38px; max-width: 120px; object-fit: contain;">
                 </div>
-                <div style="text-align: center; font-weight: bold; font-size: 0.85rem;" id="prev-receipt-name">${g.name || 'Apex Health & Care Pharmacy'}</div>
+                <div style="text-align: center; font-weight: bold; font-size: 0.85rem;" id="prev-receipt-name">${g.name || 'Bagan Medical Hall'}</div>
                 <div style="text-align: center; font-size: 0.68rem; color: #475569;" id="prev-receipt-tagline">${g.tagline || ''}</div>
                 <div style="text-align: center; font-size: 0.68rem; color: #475569;" id="prev-receipt-address">${g.address || ''}</div>
                 <div style="border-top: 1px dashed #cbd5e1; margin: 4px 0;"></div>
@@ -994,7 +1014,7 @@ const Auth = {
                 <div style="width: 52px; height: 52px; margin: 0 auto 4px auto; display: flex; align-items: center; justify-content: center;">
                   <img id="prev-login-logo" src="${logoColoredData || logoColoredPath}" alt="Coloured Logo" style="max-height: 48px; max-width: 48px; object-fit: contain;">
                 </div>
-                <div style="font-weight: 800; font-size: 0.95rem; color: #0f172a;" id="prev-login-name">${g.name || 'Apex Health & Care Pharmacy'}</div>
+                <div style="font-weight: 800; font-size: 0.95rem; color: #0f172a;" id="prev-login-name">${g.name || 'Bagan Medical Hall'}</div>
                 <div style="font-size: 0.72rem; color: #64748b;" id="prev-login-tagline">${g.tagline || ''}</div>
               </div>
             </div>
@@ -1144,7 +1164,7 @@ const Auth = {
 
             <div class="form-group">
               <label class="form-label">Thermal Receipt Footer Closing Note</label>
-              <input type="text" id="page-ui-receipt-footer" class="form-control" value="${u.thermalReceiptFooter || 'Thank you for choosing Apex Health & Care Pharmacy!'}">
+              <input type="text" id="page-ui-receipt-footer" class="form-control" value="${u.thermalReceiptFooter || 'Thank you for choosing Bagan Medical Hall!'}">
             </div>
 
             <div class="form-group" style="padding: 0.75rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
@@ -1187,15 +1207,22 @@ const Auth = {
               <span>📸</span> Media Center & Asset Management
             </h2>
             <p style="font-size: 0.8rem; color: #64748b; margin: 0;">
-              All images are securely stored in the <code>website_images/</code> folder. Easily browse, upload, preview, and set any image as Coloured Logo, White Logo, or Fallback Logo.
+              All images are securely stored in the <code>website_images/</code> folder and browser storage. Easily browse, upload, preview, and set any image as Coloured Logo, White Logo, or Fallback Logo.
             </p>
           </div>
           <div style="display: flex; gap: 0.5rem; align-items: center;">
-            <input type="file" id="media-center-file-input" accept="image/*" style="display: none;">
+            <input type="file" id="media-center-file-input" accept="image/*" multiple style="display: none;">
             <button class="btn btn-primary" id="btn-media-center-upload" style="font-size: 0.85rem;">
               ${getIcon('upload')} Upload New to website_images/
             </button>
           </div>
+        </div>
+
+        <!-- Drag & Drop Upload Zone -->
+        <div id="media-center-dropzone" style="border: 2px dashed #94a3b8; border-radius: 10px; padding: 1.25rem; text-align: center; background: #f8fafc; margin-bottom: 1.25rem; cursor: pointer; transition: all 0.2s ease;">
+          <div style="font-size: 1.8rem; margin-bottom: 0.25rem;">🖼️</div>
+          <div style="font-weight: 700; font-size: 0.92rem; color: #1e293b;">Click to Browse or Drag & Drop Images Here</div>
+          <div style="font-size: 0.74rem; color: #64748b; margin-top: 4px;">PNG, JPG, SVG, WEBP & GIF. Auto-optimized, permanently persisted in IndexedDB and website_images/</div>
         </div>
 
         <!-- Toolbar: Search & Count Filter -->
@@ -1333,7 +1360,7 @@ const Auth = {
         <!-- Raw JSON Inspector -->
         <div style="background: #0f172a; color: #38bdf8; border-radius: 10px; padding: 1rem; overflow-x: auto; max-height: 280px; font-family: monospace; font-size: 0.76rem;">
           <div style="display: flex; justify-content: space-between; color: #94a3b8; font-size: 0.72rem; margin-bottom: 0.5rem; border-bottom: 1px solid #1e293b; padding-bottom: 4px;">
-            <span>RAW DATABASE SCHEMA INSPECTOR (ApexRx Database):</span>
+            <span>RAW DATABASE SCHEMA INSPECTOR (Bagan Medical Hall Database):</span>
             <span>Version: 2.1.0</span>
           </div>
           <pre style="margin: 0; color: #f1f5f9; line-height: 1.45;">${JSON.stringify({
@@ -2003,6 +2030,8 @@ const Auth = {
             App.showToast(`Coloured Logo saved to ${res.path}!`, 'success');
           } catch (err) {
             alert(err.message);
+          } finally {
+            coloredFile.value = '';
           }
         }
       });
@@ -2064,6 +2093,8 @@ const Auth = {
             App.showToast(`White Logo saved to ${res.path}!`, 'success');
           } catch (err) {
             alert(err.message);
+          } finally {
+            whiteFile.value = '';
           }
         }
       });
@@ -2146,6 +2177,8 @@ const Auth = {
             App.showToast(`Fallback Logo stored in ${res.path}!`, 'success');
           } catch (err) {
             alert(err.message);
+          } finally {
+            fallbackFile.value = '';
           }
         }
       });
@@ -2348,7 +2381,7 @@ const Auth = {
         const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(pharmacyDB.exportDataJson());
         const a = document.createElement('a');
         a.setAttribute("href", dataStr);
-        a.setAttribute("download", `apex-rx-backup-${Date.now()}.json`);
+        a.setAttribute("download", `bagan-medical-hall-backup-${Date.now()}.json`);
         a.click();
         a.remove();
         App.showToast('Database JSON backup downloaded!', 'success');
@@ -2371,20 +2404,51 @@ const Auth = {
     // =============================================================
     const mcUploadBtn = document.getElementById('btn-media-center-upload');
     const mcFileInput = document.getElementById('media-center-file-input');
+    const mcDropzone = document.getElementById('media-center-dropzone');
     const mcSearchInput = document.getElementById('media-center-search');
+
+    const handleUploadFiles = async (filesList) => {
+      if (!filesList || filesList.length === 0) return;
+      try {
+        App.showToast(`Uploading ${filesList.length} asset(s) to website_images/...`, 'info');
+        for (let i = 0; i < filesList.length; i++) {
+          await App.uploadImageFile(filesList[i]);
+        }
+        App.showToast(`Successfully uploaded and persisted ${filesList.length} image(s)!`, 'success');
+        this.renderDeveloperHub('media');
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        if (mcFileInput) mcFileInput.value = '';
+      }
+    };
 
     if (mcUploadBtn && mcFileInput) {
       mcUploadBtn.addEventListener('click', () => mcFileInput.click());
-      mcFileInput.addEventListener('change', async (e) => {
-        if (e.target.files && e.target.files[0]) {
-          try {
-            App.showToast('Uploading asset to website_images/...', 'info');
-            const res = await App.uploadImageFile(e.target.files[0]);
-            App.showToast(`Asset stored in ${res.path}!`, 'success');
-            this.renderDeveloperHub('media');
-          } catch (err) {
-            alert(err.message);
-          }
+      mcFileInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+          handleUploadFiles(Array.from(e.target.files));
+        }
+      });
+    }
+
+    if (mcDropzone && mcFileInput) {
+      mcDropzone.addEventListener('click', () => mcFileInput.click());
+      mcDropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        mcDropzone.style.borderColor = '#0284c7';
+        mcDropzone.style.background = '#f0f9ff';
+      });
+      mcDropzone.addEventListener('dragleave', () => {
+        mcDropzone.style.borderColor = '#94a3b8';
+        mcDropzone.style.background = '#f8fafc';
+      });
+      mcDropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        mcDropzone.style.borderColor = '#94a3b8';
+        mcDropzone.style.background = '#f8fafc';
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          handleUploadFiles(Array.from(e.dataTransfer.files));
         }
       });
     }
@@ -2957,7 +3021,7 @@ const Auth = {
             <div class="form-row-2">
               <div class="form-group">
                 <label class="form-label">Email Address</label>
-                <input type="email" id="hub-staff-email" class="form-control" value="${isEdit ? (existingStaff.email || '') : ''}" placeholder="staff@apexrx.com">
+                <input type="email" id="hub-staff-email" class="form-control" value="${isEdit ? (existingStaff.email || '') : ''}" placeholder="staff@baganmedicalhall.com">
               </div>
               <div class="form-group">
                 <label class="form-label">Phone Number</label>

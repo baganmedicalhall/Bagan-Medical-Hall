@@ -1,6 +1,6 @@
 <?php
 /**
- * Apex Rx - Image Upload & Media Center Handler for cPanel / Apache / LiteSpeed Web Servers
+ * Bagan Medical Hall - Image Upload & Media Center Handler for cPanel / Apache / LiteSpeed Web Servers
  * Stores and manages all uploaded images strictly in the /website_images folder.
  */
 header('Content-Type: application/json');

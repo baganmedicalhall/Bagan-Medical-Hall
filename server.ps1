@@ -32,7 +32,7 @@ try {
 }
 
 Write-Host "=========================================================="
-Write-Host "  Apex Rx Pharmacy POS & Accounting Server Started!"
+Write-Host "  Bagan Medical Hall - Pharmacy POS & Accounting Server Started!"
 Write-Host "  URL: http://localhost:$port/"
 Write-Host "  Serving from: $root"
 Write-Host "  Image Uploads Folder: $imageDir"

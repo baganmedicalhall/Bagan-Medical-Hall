@@ -1,6 +1,6 @@
-# Apex Rx - Pharmacy Management, POS & Complete Accounting ERP
+# Bagan Medical Hall - Pharmacy Management, POS & Complete Accounting ERP
 
-Apex Rx is an enterprise-grade, all-in-one web application built for modern pharmacies, combining **High-Speed Pharmacy POS Cashiering**, **Clinical Drug Master & Expiry Tracking**, **Double-Entry Financial Accounting**, and a multi-tier **Developer Hub Architecture**.
+Bagan Medical Hall is an enterprise-grade, all-in-one web application built for modern pharmacies, combining **High-Speed Pharmacy POS Cashiering**, **Clinical Drug Master & Expiry Tracking**, **Double-Entry Financial Accounting**, and a multi-tier **Developer Hub Architecture**.
 
 ---
 
@@ -90,7 +90,7 @@ Accessible by clicking **⚙️ Developer Hub** in the topbar or sidebar when lo
      - **Secondary Color**: Direct Hex code input (`#RRGGBB`) + visual color picker + swatch presets. Applies to gradients, badges, and secondary accents.
      - Live dynamic palette bar displaying `PRIMARY: #HEX` | `SECONDARY: #HEX` and live UI component previews.
    - **Universal Store Information**:
-     - **Universal Pharmacy Name** (e.g. `Apex Health & Care Pharmacy`)
+     - **Universal Pharmacy Name** (e.g. `Bagan Medical Hall`)
      - **Universal Contacts** (Phone numbers, Email, combined text)
      - **Universal Physical Address**
      - **Universal Tagline**

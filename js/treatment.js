@@ -509,7 +509,7 @@ const Treatment = {
           </div>
           <div class="modal-body" id="printable-t-slip" style="padding: 1.5rem; font-family: monospace; font-size: 0.85rem; color: #000;">
             <div style="text-align: center; border-bottom: 1px dashed #666; padding-bottom: 0.75rem; margin-bottom: 0.75rem;">
-              <h2 style="font-size: 1.1rem; margin: 0; font-weight: bold;">${global.name || 'Apex Health & Care Pharmacy'}</h2>
+              <h2 style="font-size: 1.1rem; margin: 0; font-weight: bold;">${global.name || 'Bagan Medical Hall'}</h2>
               <div style="font-size: 0.75rem;">${global.address || 'Dispensary & Clinical Care'}</div>
               <div style="font-size: 0.75rem;">Tel: ${global.contactPhone || '555-0199'}</div>
               <div style="margin-top: 4px; font-weight: bold; font-size: 0.85rem;">CLINICAL PROCEDURE RECEIPT</div>
@@ -546,7 +546,7 @@ const Treatment = {
             </div>
 
             <div style="text-align: center; margin-top: 1.5rem; font-size: 0.75rem; border-top: 1px dashed #666; padding-top: 8px;">
-              Thank you for trusting Apex Rx Dispensary.<br>Please keep this receipt for medical record.
+              Thank you for trusting Bagan Medical Hall.<br>Please keep this receipt for medical record.
             </div>
           </div>
           <div class="modal-footer no-print">
