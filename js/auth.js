@@ -138,6 +138,9 @@ const Auth = {
     if (appEl) appEl.style.display = 'none';
 
     this.renderLoginForm(this.loginMode);
+    if (typeof App !== 'undefined' && App.refreshBrandLogos) {
+      App.refreshBrandLogos();
+    }
   },
 
   applyUserSession() {
@@ -153,7 +156,7 @@ const Auth = {
     if (brandTitle && global.name) {
       brandTitle.textContent = global.name;
     }
-    const brandLogo = document.querySelector('.brand-icon');
+    const brandLogo = document.getElementById('sidebar-brand-icon') || document.querySelector('.brand-header .brand-icon');
     if (brandLogo) {
       brandLogo.style.background = 'transparent';
       brandLogo.style.boxShadow = 'none';
@@ -2303,12 +2306,11 @@ const Auth = {
         // Apply theme colors globally
         App.applyThemeColors(primaryColor, secondaryColor);
 
-        // Update active sidebar DOM elements immediately with White Logo on dark bg
+        // Update active sidebar and login DOM elements immediately
         const brandTitle = document.querySelector('.brand-text h1');
         if (brandTitle) brandTitle.textContent = name;
-        const brandLogo = document.querySelector('.brand-icon');
-        if (brandLogo) {
-          brandLogo.innerHTML = App.renderLogoHtml('dark');
+        if (typeof App !== 'undefined' && App.refreshBrandLogos) {
+          App.refreshBrandLogos();
         }
         const brandTagline = document.querySelector('.brand-text p');
         if (brandTagline) brandTagline.textContent = tagline;
@@ -2507,6 +2509,7 @@ const Auth = {
           logoData: dataUrl,
           logoType: 'image'
         });
+        if (typeof App !== 'undefined' && App.refreshBrandLogos) App.refreshBrandLogos();
         App.showToast(`Set ${path} as Coloured Logo!`, 'success');
         this.renderDeveloperHub('media');
       });
@@ -2522,9 +2525,8 @@ const Auth = {
           logoWhiteData: dataUrl,
           logoType: 'image'
         });
-        // Update sidebar logo immediately
-        const brandLogo = document.querySelector('.brand-icon');
-        if (brandLogo) brandLogo.innerHTML = App.renderLogoHtml('dark');
+        // Update logos immediately
+        if (typeof App !== 'undefined' && App.refreshBrandLogos) App.refreshBrandLogos();
         App.showToast(`Set ${path} as White Logo!`, 'success');
         this.renderDeveloperHub('media');
       });
@@ -2540,6 +2542,7 @@ const Auth = {
           fallbackLogoData: dataUrl,
           fallbackType: 'image'
         });
+        if (typeof App !== 'undefined' && App.refreshBrandLogos) App.refreshBrandLogos();
         App.showToast(`Set ${path} as Fallback Logo Image!`, 'success');
         this.renderDeveloperHub('media');
       });

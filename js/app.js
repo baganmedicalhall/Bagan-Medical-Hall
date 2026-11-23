@@ -5,6 +5,10 @@
 const App = {
   currentView: 'pos', // default to POS counter for fast access
 
+  DEFAULT_COLORED_LOGO_DATA_URI: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><path d="M42 8 H58 V24 H74 V40 H58 V56 H42 V40 H26 V24 H42 Z" fill="%230284c7" fill-opacity="0.18"/><path d="M26 84 V24 H48 C60 24 68 31 68 41 C68 51 60 58 48 58 H26 M44 58 L68 84" fill="none" stroke="%230284c7" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><line x1="60" y1="62" x2="82" y2="84" stroke="%230f766e" stroke-width="9" stroke-linecap="round"/><line x1="82" y1="62" x2="60" y2="84" stroke="%230f766e" stroke-width="9" stroke-linecap="round"/></svg>',
+  DEFAULT_WHITE_LOGO_DATA_URI: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><path d="M42 8 H58 V24 H74 V40 H58 V56 H42 V40 H26 V24 H42 Z" fill="%23ffffff" fill-opacity="0.25"/><path d="M26 84 V24 H48 C60 24 68 31 68 41 C68 51 60 58 48 58 H26 M44 58 L68 84" fill="none" stroke="%23ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><line x1="60" y1="62" x2="82" y2="84" stroke="%23ffffff" stroke-width="9" stroke-linecap="round" stroke-opacity="0.85"/><line x1="82" y1="62" x2="60" y2="84" stroke="%23ffffff" stroke-width="9" stroke-linecap="round" stroke-opacity="0.85"/></svg>',
+  DEFAULT_FALLBACK_LOGO_DATA_URI: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><circle cx="50" cy="50" r="42" fill="none" stroke="%230284c7" stroke-width="4" stroke-dasharray="6,4"/><path d="M44 26 H56 V44 H74 V56 H56 V74 H44 V56 H26 V44 H44 Z" fill="%230284c7"/></svg>',
+
   init() {
     // Apply dynamic theme colors from settings
     const global = pharmacyDB.data.globalSettings || {};
@@ -13,8 +17,7 @@ const App = {
     // Hydrate media assets from IndexedDB BaganMediaStore & server
     if (typeof pharmacyDB !== 'undefined' && pharmacyDB.hydrateMediaLibrary) {
       pharmacyDB.hydrateMediaLibrary().then(() => {
-        const brandLogo = document.querySelector('.brand-icon');
-        if (brandLogo) brandLogo.innerHTML = this.renderLogoHtml('dark');
+        this.refreshBrandLogos();
       });
     }
 
@@ -593,35 +596,72 @@ const App = {
   },
 
   /* -------------------------------------------------------------
+   * REFRESH BRAND LOGOS GLOBALLY (LOGIN SCREEN & SIDEBAR)
+   * ------------------------------------------------------------- */
+  refreshBrandLogos() {
+    // 1. Refresh Login Screen Logo if present (MUST be 'light' coloured on white card)
+    const loginLogoEl = document.getElementById('login-clickable-logo');
+    if (loginLogoEl) {
+      loginLogoEl.innerHTML = this.renderLogoHtml('light', 'width: 100%; height: 100%; object-fit: contain; border: none; box-shadow: none;');
+    }
+
+    // 2. Refresh Sidebar Logo if present (MUST be 'dark' white on dark sidebar)
+    const sidebarLogoEl = document.getElementById('sidebar-brand-icon') || document.querySelector('.brand-header .brand-icon');
+    if (sidebarLogoEl) {
+      sidebarLogoEl.innerHTML = this.renderLogoHtml('dark', 'width: 100%; height: 100%; object-fit: contain; border: none; box-shadow: none;');
+    }
+  },
+
+  /* -------------------------------------------------------------
    * CONTEXT-AWARE LOGO RESOLVER (White vs Coloured Logo & Fallback)
    * ------------------------------------------------------------- */
   getLogoForBackground(bgType = 'dark') {
-    const g = pharmacyDB.data.globalSettings || {};
+    const g = (typeof pharmacyDB !== 'undefined' && pharmacyDB.data && pharmacyDB.data.globalSettings) ? pharmacyDB.data.globalSettings : {};
     if (g.logoType === 'text') {
-      return { type: 'text', content: g.logo || 'Rx', fallbackText: g.logo || 'Rx' };
+      return { type: 'text', content: g.logo || 'BMH', fallbackText: g.logo || 'BMH' };
     }
 
-    const fallbackImg = g.fallbackLogoData || g.fallbackLogoImage || 'website_images/default-logo-fallback.svg';
-    const fallbackText = g.logo || 'Rx';
+    const fallbackImg = g.fallbackLogoData || this.DEFAULT_FALLBACK_LOGO_DATA_URI || 'website_images/default-logo-fallback.svg';
+    const fallbackText = g.logo || 'BMH';
     const fallbackType = g.fallbackType || 'image';
 
     if (bgType === 'dark') {
       // Dark Background (e.g. #0f172a sidebar) -> prefers White Logo
-      const src = g.logoWhiteData || g.logoWhite || 'website_images/default-logo-white.svg';
+      let src = g.logoWhiteData;
+      if (!src && g.logoWhite && g.logoWhite.startsWith('data:')) {
+        src = g.logoWhite;
+      }
+      if (!src && g.logoWhite && typeof pharmacyDB !== 'undefined' && pharmacyDB.data && Array.isArray(pharmacyDB.data.mediaLibrary)) {
+        const found = pharmacyDB.data.mediaLibrary.find(m => (m.path === g.logoWhite || m.filename === g.logoWhite) && m.dataUrl);
+        if (found) src = found.dataUrl;
+      }
+      if (!src) {
+        src = (g.logoWhite && g.logoWhite !== 'website_images/default-logo-white.svg') ? g.logoWhite : (this.DEFAULT_WHITE_LOGO_DATA_URI || 'website_images/default-logo-white.svg');
+      }
       return {
         type: 'image',
         src: src,
-        fallbackSrc: fallbackImg,
+        fallbackSrc: this.DEFAULT_WHITE_LOGO_DATA_URI || fallbackImg,
         fallbackText: fallbackText,
         fallbackType: fallbackType
       };
     } else {
       // Light Background (e.g. login card, white receipt) -> prefers Coloured Logo
-      const src = g.logoColoredData || g.logoColored || g.logoImage || 'website_images/default-logo-colored.svg';
+      let src = g.logoColoredData;
+      if (!src && g.logoColored && g.logoColored.startsWith('data:')) {
+        src = g.logoColored;
+      }
+      if (!src && g.logoColored && typeof pharmacyDB !== 'undefined' && pharmacyDB.data && Array.isArray(pharmacyDB.data.mediaLibrary)) {
+        const found = pharmacyDB.data.mediaLibrary.find(m => (m.path === g.logoColored || m.filename === g.logoColored) && m.dataUrl);
+        if (found) src = found.dataUrl;
+      }
+      if (!src) {
+        src = (g.logoColored && g.logoColored !== 'website_images/default-logo-colored.svg') ? g.logoColored : (this.DEFAULT_COLORED_LOGO_DATA_URI || 'website_images/default-logo-colored.svg');
+      }
       return {
         type: 'image',
         src: src,
-        fallbackSrc: fallbackImg,
+        fallbackSrc: this.DEFAULT_COLORED_LOGO_DATA_URI || fallbackImg,
         fallbackText: fallbackText,
         fallbackType: fallbackType
       };
@@ -634,12 +674,11 @@ const App = {
       return `<span style="font-weight: 800; font-size: inherit;">${logo.content}</span>`;
     }
 
-    // For image logos, provide resilient fallback:
-    if (logo.fallbackType === 'image' && logo.fallbackSrc) {
-      return `<img src="${logo.src}" alt="Logo" style="${imgStyle}" onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src='${logo.fallbackSrc}';}else{this.style.display='none';this.parentElement.insertAdjacentHTML('beforeend','<span style=\\'font-weight:800; font-size:1.5rem;\\'>${logo.fallbackText}</span>');}">`;
-    } else {
-      return `<img src="${logo.src}" alt="Logo" style="${imgStyle}" onerror="this.style.display='none';this.parentElement.insertAdjacentHTML('beforeend','<span style=\\'font-weight:800; font-size:1.5rem;\\'>${logo.fallbackText}</span>');">`;
-    }
+    const safeFallback = bgType === 'dark' ? (this.DEFAULT_WHITE_LOGO_DATA_URI || 'website_images/default-logo-white.svg') : (this.DEFAULT_COLORED_LOGO_DATA_URI || 'website_images/default-logo-colored.svg');
+    const fallbackSrc = logo.fallbackSrc || safeFallback;
+    const textColor = bgType === 'dark' ? '#ffffff' : '#0284c7';
+
+    return `<img src="${logo.src}" alt="Logo" style="${imgStyle}" onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src='${fallbackSrc}';}else{this.style.display='none';this.parentElement.insertAdjacentHTML('beforeend','<span style=\\'font-weight:800; font-size:1.5rem; color:${textColor};\\'>${logo.fallbackText}</span>');}">`;
   },
 
   /* -------------------------------------------------------------

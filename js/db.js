@@ -715,11 +715,18 @@ const DEFAULT_STAFF = [
 ];
 
 // Preloaded Media Center Items
+const DEFAULT_COLORED_LOGO_DATA_URI = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><path d="M42 8 H58 V24 H74 V40 H58 V56 H42 V40 H26 V24 H42 Z" fill="%230284c7" fill-opacity="0.18"/><path d="M26 84 V24 H48 C60 24 68 31 68 41 C68 51 60 58 48 58 H26 M44 58 L68 84" fill="none" stroke="%230284c7" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><line x1="60" y1="62" x2="82" y2="84" stroke="%230f766e" stroke-width="9" stroke-linecap="round"/><line x1="82" y1="62" x2="60" y2="84" stroke="%230f766e" stroke-width="9" stroke-linecap="round"/></svg>';
+
+const DEFAULT_WHITE_LOGO_DATA_URI = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><path d="M42 8 H58 V24 H74 V40 H58 V56 H42 V40 H26 V24 H42 Z" fill="%23ffffff" fill-opacity="0.25"/><path d="M26 84 V24 H48 C60 24 68 31 68 41 C68 51 60 58 48 58 H26 M44 58 L68 84" fill="none" stroke="%23ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><line x1="60" y1="62" x2="82" y2="84" stroke="%23ffffff" stroke-width="9" stroke-linecap="round" stroke-opacity="0.85"/><line x1="82" y1="62" x2="60" y2="84" stroke="%23ffffff" stroke-width="9" stroke-linecap="round" stroke-opacity="0.85"/></svg>';
+
+const DEFAULT_FALLBACK_LOGO_DATA_URI = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><circle cx="50" cy="50" r="42" fill="none" stroke="%230284c7" stroke-width="4" stroke-dasharray="6,4"/><path d="M44 26 H56 V44 H74 V56 H56 V74 H44 V56 H26 V44 H44 Z" fill="%230284c7"/></svg>';
+
 const DEFAULT_MEDIA_LIBRARY = [
   {
     id: 'med_default_colored',
     filename: 'default-logo-colored.svg',
     path: 'website_images/default-logo-colored.svg',
+    dataUrl: DEFAULT_COLORED_LOGO_DATA_URI,
     size: 824,
     uploadedAt: 'Preloaded',
     title: 'Default Coloured Logo (For Light Backgrounds)'
@@ -728,6 +735,7 @@ const DEFAULT_MEDIA_LIBRARY = [
     id: 'med_default_white',
     filename: 'default-logo-white.svg',
     path: 'website_images/default-logo-white.svg',
+    dataUrl: DEFAULT_WHITE_LOGO_DATA_URI,
     size: 790,
     uploadedAt: 'Preloaded',
     title: 'Default White Logo (For Dark Backgrounds)'
@@ -736,6 +744,7 @@ const DEFAULT_MEDIA_LIBRARY = [
     id: 'med_default_fallback',
     filename: 'default-logo-fallback.svg',
     path: 'website_images/default-logo-fallback.svg',
+    dataUrl: DEFAULT_FALLBACK_LOGO_DATA_URI,
     size: 450,
     uploadedAt: 'Preloaded',
     title: 'Default Fallback Logo'
@@ -868,14 +877,14 @@ const DEFAULT_GLOBAL_SETTINGS = {
   logo: 'BMH', // text emblem
   logoType: 'image', // 'image' or 'text'
   logoColored: 'website_images/default-logo-colored.svg', // Coloured logo for light backgrounds (receipts, white card)
-  logoColoredData: '',
+  logoColoredData: DEFAULT_COLORED_LOGO_DATA_URI,
   logoWhite: 'website_images/default-logo-white.svg', // White logo for dark backgrounds (sidebar)
-  logoWhiteData: '',
+  logoWhiteData: DEFAULT_WHITE_LOGO_DATA_URI,
   fallbackLogoImage: 'website_images/default-logo-fallback.svg', // Image for fallback logo
-  fallbackLogoData: '',
+  fallbackLogoData: DEFAULT_FALLBACK_LOGO_DATA_URI,
   fallbackType: 'image', // 'image' or 'text'
   logoImage: 'website_images/default-logo-colored.svg', // legacy alias
-  logoData: '',
+  logoData: DEFAULT_COLORED_LOGO_DATA_URI,
   primaryColor: '#0284c7',
   secondaryColor: '#0f766e',
   greetingMessage: 'Welcome to Bagan Medical Hall. Please verify temperature logs and prescriptions carefully.'
@@ -1164,9 +1173,18 @@ class PharmacyDatabase {
           // Hydrate global settings logo dataUrls if matching
           const g = this.data.globalSettings;
           if (g && img.dataUrl) {
-            if (g.logoColored === img.path || g.logoColored === img.filename) g.logoColoredData = img.dataUrl;
-            if (g.logoWhite === img.path || g.logoWhite === img.filename) g.logoWhiteData = img.dataUrl;
-            if (g.fallbackLogoImage === img.path || g.fallbackLogoImage === img.filename) g.fallbackLogoData = img.dataUrl;
+            if (g.logoColored === img.path || g.logoColored === img.filename) {
+              g.logoColoredData = img.dataUrl;
+              try { localStorage.setItem('bmh_active_logo_colored', img.dataUrl); } catch (_) {}
+            }
+            if (g.logoWhite === img.path || g.logoWhite === img.filename) {
+              g.logoWhiteData = img.dataUrl;
+              try { localStorage.setItem('bmh_active_logo_white', img.dataUrl); } catch (_) {}
+            }
+            if (g.fallbackLogoImage === img.path || g.fallbackLogoImage === img.filename) {
+              g.fallbackLogoData = img.dataUrl;
+              try { localStorage.setItem('bmh_active_logo_fallback', img.dataUrl); } catch (_) {}
+            }
           }
         });
       }
@@ -1200,6 +1218,21 @@ class PharmacyDatabase {
           if (!parsed.globalSettings.fallbackType) parsed.globalSettings.fallbackType = 'image';
           if (!parsed.globalSettings.logoImage) parsed.globalSettings.logoImage = parsed.globalSettings.logoColored;
           if (!parsed.globalSettings.logoType) parsed.globalSettings.logoType = 'image';
+
+          // Ensure logo dataUrls are NEVER lost on page refresh
+          if (!parsed.globalSettings.logoColoredData) {
+            const cachedCol = localStorage.getItem('bmh_active_logo_colored');
+            parsed.globalSettings.logoColoredData = cachedCol || (parsed.globalSettings.logoColored === 'website_images/default-logo-colored.svg' ? DEFAULT_COLORED_LOGO_DATA_URI : '');
+          }
+          if (!parsed.globalSettings.logoWhiteData) {
+            const cachedWhite = localStorage.getItem('bmh_active_logo_white');
+            parsed.globalSettings.logoWhiteData = cachedWhite || (parsed.globalSettings.logoWhite === 'website_images/default-logo-white.svg' ? DEFAULT_WHITE_LOGO_DATA_URI : '');
+          }
+          if (!parsed.globalSettings.fallbackLogoData) {
+            const cachedFb = localStorage.getItem('bmh_active_logo_fallback');
+            parsed.globalSettings.fallbackLogoData = cachedFb || DEFAULT_FALLBACK_LOGO_DATA_URI;
+          }
+          parsed.globalSettings.logoData = parsed.globalSettings.logoColoredData;
         }
         if (!parsed.mediaLibrary || !Array.isArray(parsed.mediaLibrary)) {
           parsed.mediaLibrary = JSON.parse(JSON.stringify(DEFAULT_MEDIA_LIBRARY));
@@ -1381,6 +1414,10 @@ class PharmacyDatabase {
       this.data.globalSettings.logoColoredData = settings.logoColoredData;
       this.data.globalSettings.logoData = settings.logoColoredData;
       if (this.data.loginPageSettings) this.data.loginPageSettings.logoColoredData = settings.logoColoredData;
+      try {
+        if (settings.logoColoredData) localStorage.setItem('bmh_active_logo_colored', settings.logoColoredData);
+        else localStorage.removeItem('bmh_active_logo_colored');
+      } catch (_) {}
     }
     if (settings.logoWhite) {
       this.data.globalSettings.logoWhite = settings.logoWhite;
@@ -1389,12 +1426,20 @@ class PharmacyDatabase {
     if (settings.logoWhiteData !== undefined) {
       this.data.globalSettings.logoWhiteData = settings.logoWhiteData;
       if (this.data.loginPageSettings) this.data.loginPageSettings.logoWhiteData = settings.logoWhiteData;
+      try {
+        if (settings.logoWhiteData) localStorage.setItem('bmh_active_logo_white', settings.logoWhiteData);
+        else localStorage.removeItem('bmh_active_logo_white');
+      } catch (_) {}
     }
     if (settings.fallbackLogoImage) {
       this.data.globalSettings.fallbackLogoImage = settings.fallbackLogoImage;
     }
     if (settings.fallbackLogoData !== undefined) {
       this.data.globalSettings.fallbackLogoData = settings.fallbackLogoData;
+      try {
+        if (settings.fallbackLogoData) localStorage.setItem('bmh_active_logo_fallback', settings.fallbackLogoData);
+        else localStorage.removeItem('bmh_active_logo_fallback');
+      } catch (_) {}
     }
     if (settings.fallbackType) {
       this.data.globalSettings.fallbackType = settings.fallbackType;
