@@ -1,13 +1,13 @@
-/**
+﻿/**
  * Master Application Coordinator & Navigation Router
  */
 
 const App = {
   currentView: 'pos', // default to POS counter for fast access
 
-  DEFAULT_COLORED_LOGO_DATA_URI: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><path d="M42 8 H58 V24 H74 V40 H58 V56 H42 V40 H26 V24 H42 Z" fill="%230284c7" fill-opacity="0.18"/><path d="M26 84 V24 H48 C60 24 68 31 68 41 C68 51 60 58 48 58 H26 M44 58 L68 84" fill="none" stroke="%230284c7" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><line x1="60" y1="62" x2="82" y2="84" stroke="%230f766e" stroke-width="9" stroke-linecap="round"/><line x1="82" y1="62" x2="60" y2="84" stroke="%230f766e" stroke-width="9" stroke-linecap="round"/></svg>',
-  DEFAULT_WHITE_LOGO_DATA_URI: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><path d="M42 8 H58 V24 H74 V40 H58 V56 H42 V40 H26 V24 H42 Z" fill="%23ffffff" fill-opacity="0.25"/><path d="M26 84 V24 H48 C60 24 68 31 68 41 C68 51 60 58 48 58 H26 M44 58 L68 84" fill="none" stroke="%23ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><line x1="60" y1="62" x2="82" y2="84" stroke="%23ffffff" stroke-width="9" stroke-linecap="round" stroke-opacity="0.85"/><line x1="82" y1="62" x2="60" y2="84" stroke="%23ffffff" stroke-width="9" stroke-linecap="round" stroke-opacity="0.85"/></svg>',
-  DEFAULT_FALLBACK_LOGO_DATA_URI: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><circle cx="50" cy="50" r="42" fill="none" stroke="%230284c7" stroke-width="4" stroke-dasharray="6,4"/><path d="M44 26 H56 V44 H74 V56 H56 V74 H44 V56 H26 V44 H44 Z" fill="%230284c7"/></svg>',
+  DEFAULT_COLORED_LOGO_DATA_URI: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIiB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCI+CiAgPCEtLSBDb2xvdXJlZCBQaGFybWFjeSBMb2dvOiBPcHRpbWl6ZWQgZm9yIExpZ2h0IEJhY2tncm91bmRzIChSZWNlaXB0cywgV2hpdGUgQ2FyZHMpIC0tPgogIDxwYXRoIGQ9Ik00MiA4IEg1OCBWMjQgSDc0IFY0MCBINTggVjU2IEg0MiBWNDAgSDI2IFYyNCBINDIgWiIgZmlsbD0iIzAyODRjNyIgZmlsbC1vcGFjaXR5PSIwLjE4IiAvPgogIDxwYXRoIGQ9Ik0yNiA4NCBWMjQgSDQ4IEM2MCAyNCA2OCAzMSA2OCA0MSBDNjggNTEgNjAgNTggNDggNTggSDI2IE00NCA1OCBMNjggODQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzAyODRjNyIgc3Ryb2tlLXdpZHRoPSI5IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIC8+CiAgPGxpbmUgeDE9IjYwIiB5MT0iNjIiIHgyPSI4MiIgeTI9Ijg0IiBzdHJva2U9IiMwZjc2NmUiIHN0cm9rZS13aWR0aD0iOSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiAvPgogIDxsaW5lIHgxPSI4MiIgeTE9IjYyIiB4Mj0iNjAiIHkyPSI4NCIgc3Ryb2tlPSIjMGY3NjZlIiBzdHJva2Utd2lkdGg9IjkiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgLz4KPC9zdmc+Cg==',
+  DEFAULT_WHITE_LOGO_DATA_URI: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIiB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCI+CiAgPCEtLSBXaGl0ZSBQaGFybWFjeSBMb2dvOiBPcHRpbWl6ZWQgZm9yIERhcmsgQmFja2dyb3VuZHMgKFNpZGViYXIsIERhcmsgSGVhZGVycykgLS0+CiAgPHBhdGggZD0iTTQyIDggSDU4IFYyNCBINzQgVjQwIEg1OCBWNTYgSDQyIFY0MCBIMjYgVjI0IEg0MiBaIiBmaWxsPSIjZmZmZmZmIiBmaWxsLW9wYWNpdHk9IjAuMjUiIC8+CiAgPHBhdGggZD0iTTI2IDg0IFYyNCBINDggQzYwIDI0IDY4IDMxIDY4IDQxIEM2OCA1MSA2MCA1OCA0OCA1OCBIMjYgTTQ0IDU4IEw2OCA4NCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utd2lkdGg9IjkiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgLz4KICA8bGluZSB4MT0iNjAiIHkxPSI2MiIgeDI9IjgyIiB5Mj0iODQiIHN0cm9rZT0iI2ZmZmZmZiIgc3Ryb2tlLXdpZHRoPSI5IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1vcGFjaXR5PSIwLjg1IiAvPgogIDxsaW5lIHgxPSI4MiIgeTE9IjYyIiB4Mj0iNjAiIHkyPSI4NCIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utd2lkdGg9IjkiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLW9wYWNpdHk9IjAuODUiIC8+Cjwvc3ZnPgo=',
+  DEFAULT_FALLBACK_LOGO_DATA_URI: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIiB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCI+CiAgPCEtLSBGYWxsYmFjayBFbWJsZW06IENhZHVjZXVzIC8gUnggQ3Jvc3MgTWluaW1hbCAtLT4KICA8Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMDI4NGM3IiBzdHJva2Utd2lkdGg9IjQiIHN0cm9rZS1kYXNoYXJyYXk9IjYsNCIgLz4KICA8cGF0aCBkPSJNNDQgMjYgSDU2IFY0NCBINzQgVjU2IEg1NiBWNzQgSDQ0IFY1NiBIMjYgVjQ0IEg0NCBaIiBmaWxsPSIjMDI4NGM3IiAvPgo8L3N2Zz4K',
 
   init() {
     // Apply dynamic theme colors from settings
@@ -621,18 +621,21 @@ const App = {
       return { type: 'text', content: g.logo || 'BMH', fallbackText: g.logo || 'BMH' };
     }
 
-    const fallbackImg = g.fallbackLogoData || this.DEFAULT_FALLBACK_LOGO_DATA_URI || 'website_images/default-logo-fallback.svg';
+    const fallbackImg = (g.fallbackLogoData && g.fallbackLogoData.indexOf('utf8') === -1) ? g.fallbackLogoData : (this.DEFAULT_FALLBACK_LOGO_DATA_URI || 'website_images/default-logo-fallback.svg');
     const fallbackText = g.logo || 'BMH';
     const fallbackType = g.fallbackType || 'image';
 
     if (bgType === 'dark') {
       // Dark Background (e.g. #0f172a sidebar) -> prefers White Logo
       let src = g.logoWhiteData;
+      if (src && (src.indexOf('utf8') > -1 || src.indexOf('<svg') > -1)) {
+        src = this.DEFAULT_WHITE_LOGO_DATA_URI;
+      }
       if (!src && g.logoWhite && g.logoWhite.startsWith('data:')) {
         src = g.logoWhite;
       }
       if (!src && g.logoWhite && typeof pharmacyDB !== 'undefined' && pharmacyDB.data && Array.isArray(pharmacyDB.data.mediaLibrary)) {
-        const found = pharmacyDB.data.mediaLibrary.find(m => (m.path === g.logoWhite || m.filename === g.logoWhite) && m.dataUrl);
+        const found = pharmacyDB.data.mediaLibrary.find(m => (m.path === g.logoWhite || m.filename === g.logoWhite) && m.dataUrl && m.dataUrl.indexOf('utf8') === -1);
         if (found) src = found.dataUrl;
       }
       if (!src) {
@@ -648,11 +651,14 @@ const App = {
     } else {
       // Light Background (e.g. login card, white receipt) -> prefers Coloured Logo
       let src = g.logoColoredData;
+      if (src && (src.indexOf('utf8') > -1 || src.indexOf('<svg') > -1)) {
+        src = this.DEFAULT_COLORED_LOGO_DATA_URI;
+      }
       if (!src && g.logoColored && g.logoColored.startsWith('data:')) {
         src = g.logoColored;
       }
       if (!src && g.logoColored && typeof pharmacyDB !== 'undefined' && pharmacyDB.data && Array.isArray(pharmacyDB.data.mediaLibrary)) {
-        const found = pharmacyDB.data.mediaLibrary.find(m => (m.path === g.logoColored || m.filename === g.logoColored) && m.dataUrl);
+        const found = pharmacyDB.data.mediaLibrary.find(m => (m.path === g.logoColored || m.filename === g.logoColored) && m.dataUrl && m.dataUrl.indexOf('utf8') === -1);
         if (found) src = found.dataUrl;
       }
       if (!src) {
@@ -675,10 +681,10 @@ const App = {
     }
 
     const safeFallback = bgType === 'dark' ? (this.DEFAULT_WHITE_LOGO_DATA_URI || 'website_images/default-logo-white.svg') : (this.DEFAULT_COLORED_LOGO_DATA_URI || 'website_images/default-logo-colored.svg');
-    const fallbackSrc = logo.fallbackSrc || safeFallback;
+    const fallbackSrc = (logo.fallbackSrc && logo.fallbackSrc.indexOf('utf8') === -1) ? logo.fallbackSrc : safeFallback;
     const textColor = bgType === 'dark' ? '#ffffff' : '#0284c7';
 
-    return `<img src="${logo.src}" alt="Logo" style="${imgStyle}" onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src='${fallbackSrc}';}else{this.style.display='none';this.parentElement.insertAdjacentHTML('beforeend','<span style=\\'font-weight:800; font-size:1.5rem; color:${textColor};\\'>${logo.fallbackText}</span>');}">`;
+    return `<img src="${logo.src}" alt="Logo" style="${imgStyle}" onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src='${fallbackSrc}';}else{this.style.display='none';var s=this.nextElementSibling;if(s)s.style.display='inline-block';}"><span class="logo-fallback-text" style="display: none; font-weight: 800; font-size: 1.5rem; color: ${textColor};">${logo.fallbackText}</span>`;
   },
 
   /* -------------------------------------------------------------
