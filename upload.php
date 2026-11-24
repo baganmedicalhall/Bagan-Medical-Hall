@@ -41,11 +41,35 @@ function updateImageManifest($dir) {
             }
         }
     }
-    $catalog = ['success' => true, 'folder' => 'website_images', 'files' => $files];
+    $amritMedia = [];
+    foreach ($files as $f) {
+        $amritMedia[] = [
+            'id' => 'med_' . preg_replace('/[^a-zA-Z0-9]/', '_', $f['filename']),
+            'filename' => $f['filename'],
+            'originalFilename' => $f['filename'],
+            'filePath' => $f['path'],
+            'url' => $f['path'],
+            'mimeType' => ($f['format'] === 'webp') ? 'image/webp' : 'image/' . $f['format'],
+            'fileSize' => $f['size'],
+            'folderId' => 'folder-general',
+            'folderName' => 'General',
+            'folderSlug' => 'general',
+            'createdAt' => $f['lastModified'],
+            'updatedAt' => $f['lastModified']
+        ];
+    }
+    $catalog = [
+        'status' => 'ok',
+        'success' => true,
+        'folder' => 'website_images',
+        'total' => count($files),
+        'media' => $amritMedia,
+        'files' => $files
+    ];
     $json = json_encode($catalog, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
     @file_put_contents($dir . 'images.json', $json);
     @file_put_contents($dir . 'manifest.json', $json);
-    return $files;
+    return $catalog;
 }
 
 // 1. Save Settings (Active Logo Configuration in website_images/settings.json)

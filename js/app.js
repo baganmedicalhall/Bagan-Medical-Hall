@@ -533,8 +533,12 @@ const App = {
     let savedOnServer = false;
 
     const endpoints = [
+      '/api/admin/media/upload',
+      '/api/media/upload',
       '/api/upload',
       'upload.php',
+      'http://localhost:8080/api/admin/media/upload',
+      'http://localhost:8080/api/media/upload',
       'http://localhost:8080/api/upload',
       'http://localhost:8080/upload.php'
     ];
@@ -548,7 +552,7 @@ const App = {
         });
         if (res.ok) {
           const json = await res.json();
-          if (json && json.success) {
+          if (json && (json.success || json.status === 'ok')) {
             savedOnServer = true;
             break;
           }
@@ -616,8 +620,12 @@ const App = {
 
     // 3. Remove physical file from website_images/ directory on server
     const endpoints = [
+      `/api/admin/media/${encodeURIComponent(filename)}`,
+      `/api/media/${encodeURIComponent(filename)}`,
       `/api/media?filename=${encodeURIComponent(filename)}`,
       `upload.php?action=delete&filename=${encodeURIComponent(filename)}`,
+      `http://localhost:8080/api/admin/media/${encodeURIComponent(filename)}`,
+      `http://localhost:8080/api/media/${encodeURIComponent(filename)}`,
       `http://localhost:8080/api/media?filename=${encodeURIComponent(filename)}`,
       `http://localhost:8080/upload.php?action=delete&filename=${encodeURIComponent(filename)}`
     ];
@@ -682,10 +690,12 @@ const App = {
 
     // 1. Fetch static images.json manifest directly from website_images/ directory
     const manifestPaths = [
+      '/api/admin/media',
+      '/api/media',
       'website_images/images.json',
       'website_images/manifest.json',
-      '/api/media',
       'upload.php',
+      'http://localhost:8080/api/admin/media',
       'http://localhost:8080/api/media',
       'http://localhost:8080/upload.php'
     ];
@@ -695,21 +705,23 @@ const App = {
         const res = await fetch(ep, { method: 'GET' });
         if (res.ok) {
           const data = await res.json();
-          if (data && data.success && Array.isArray(data.files)) {
-            data.files.forEach(f => {
-              if (f.filename === 'bagan-medical-hall-logo.png') return;
-              if (pharmacyDB.data && pharmacyDB.data.deletedMedia && pharmacyDB.data.deletedMedia.includes(f.filename)) return;
+          const rawItems = Array.isArray(data.media) ? data.media : (Array.isArray(data.files) ? data.files : []);
+          if (data && (data.success || data.status === 'ok') && rawItems.length > 0) {
+            rawItems.forEach(f => {
+              const fname = f.filename || f.name;
+              if (!fname || fname === 'bagan-medical-hall-logo.png') return;
+              if (pharmacyDB.data && pharmacyDB.data.deletedMedia && pharmacyDB.data.deletedMedia.includes(fname)) return;
               pharmacyDB.addMediaItem({
-                id: 'med_' + f.filename.replace(/[^a-zA-Z0-9]/g, '_'),
-                filename: f.filename,
-                path: f.path || ('website_images/' + f.filename),
-                size: f.size || 0,
-                format: f.format || (f.filename.endsWith('.webp') ? 'webp' : 'image'),
-                uploadedAt: f.lastModified || 'Preloaded'
+                id: f.id || ('med_' + fname.replace(/[^a-zA-Z0-9]/g, '_')),
+                filename: fname,
+                path: f.filePath || f.path || f.url || ('website_images/' + fname),
+                size: f.fileSize || f.size || 0,
+                format: f.mimeType === 'image/webp' || fname.endsWith('.webp') ? 'webp' : (f.format || 'image'),
+                uploadedAt: f.createdAt || f.lastModified || 'Preloaded'
               });
             });
             syncedAny = true;
-            fileCount = data.files.length;
+            fileCount = rawItems.length;
             break;
           }
         }

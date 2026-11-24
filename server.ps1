@@ -1,8 +1,8 @@
 <#
  ==============================================================================
   Bagan Medical Hall - Pharmacy POS & Accounting ERP
-  Native Windows HTTP Web Server & Real-Time Disk Synchronizer
-  Binds with System.Net.Sockets.TcpListener for 100% Reliability on Port 8080
+  High-Performance Multi-Threaded HTTP Server & Real-Time Media Synchronizer
+  Implements the Amrit Media Center backend API model with native thread pooling
  ==============================================================================
 #>
 
@@ -17,78 +17,446 @@ if (!(Test-Path $imageDir)) {
     New-Item -ItemType Directory -Path $imageDir -Force | Out-Null
 }
 
-function Update-ImageManifest {
-    param($dir)
-    try {
-        if (Test-Path $dir) {
-            $rawFiles = Get-ChildItem -Path $dir -File | Where-Object { 
-                $_.Extension -match '\.(webp|png|jpg|jpeg|svg|gif|ico)$' -and 
-                $_.Name -ne 'bagan-medical-hall-logo.png' 
+$csharpSource = @"
+using System;
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading;
+using System.Collections.Generic;
+
+public class BaganMediaHttpServer {
+    private TcpListener _listener;
+    private string _root;
+    private string _imageDir;
+    private int _port;
+    private volatile bool _running = false;
+
+    private static readonly Dictionary<string, string> MimeTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        { ".html", "text/html; charset=utf-8" },
+        { ".htm",  "text/html; charset=utf-8" },
+        { ".css",  "text/css; charset=utf-8" },
+        { ".js",   "application/javascript; charset=utf-8" },
+        { ".json", "application/json; charset=utf-8" },
+        { ".svg",  "image/svg+xml" },
+        { ".png",  "image/png" },
+        { ".jpg",  "image/jpeg" },
+        { ".jpeg", "image/jpeg" },
+        { ".gif",  "image/gif" },
+        { ".webp", "image/webp" },
+        { ".ico",  "image/x-icon" },
+        { ".woff", "font/woff" },
+        { ".woff2","font/woff2" },
+        { ".ttf",  "font/ttf" }
+    };
+
+    public BaganMediaHttpServer(string root, string imageDir, int port) {
+        _root = Path.GetFullPath(root);
+        _imageDir = Path.GetFullPath(imageDir);
+        _port = port;
+    }
+
+    public void Start() {
+        try {
+            _listener = new TcpListener(IPAddress.Any, _port);
+            _listener.Start(100);
+        } catch {
+            _listener = new TcpListener(IPAddress.Loopback, _port);
+            _listener.Start(100);
+        }
+        _running = true;
+
+        Thread listenThread = new Thread(ListenLoop);
+        listenThread.IsBackground = true;
+        listenThread.Name = "BaganMediaServer_Listener";
+        listenThread.Start();
+    }
+
+    public void Stop() {
+        _running = false;
+        try { _listener.Stop(); } catch {}
+    }
+
+    private void ListenLoop() {
+        while (_running) {
+            try {
+                TcpClient client = _listener.AcceptTcpClient();
+                ThreadPool.QueueUserWorkItem(ProcessClient, client);
+            } catch {
+                if (!_running) break;
             }
-            $fileList = @()
-            foreach ($f in $rawFiles) {
-                $fileList += @{
-                    filename     = $f.Name
-                    path         = "website_images/$($f.Name)"
-                    size         = $f.Length
-                    format       = $f.Extension.TrimStart('.').ToLower()
-                    title        = if ($f.Name -like "*bagan*") { "Bagan Medical Hall Official Logo" } else { "Asset ($($f.Name))" }
-                    lastModified = $f.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
+        }
+    }
+
+    private void ProcessClient(object state) {
+        TcpClient client = (TcpClient)state;
+        NetworkStream stream = null;
+        try {
+            client.ReceiveTimeout = 10000;
+            client.SendTimeout = 10000;
+            stream = client.GetStream();
+
+            // Read HTTP request header
+            MemoryStream headerMs = new MemoryStream();
+            byte[] buf = new byte[8192];
+            int headerEnd = -1;
+
+            while (headerEnd == -1) {
+                int read = stream.Read(buf, 0, buf.Length);
+                if (read <= 0) break;
+                headerMs.Write(buf, 0, read);
+                byte[] all = headerMs.ToArray();
+                for (int i = 0; i <= all.Length - 4; i++) {
+                    if (all[i] == 13 && all[i + 1] == 10 && all[i + 2] == 13 && all[i + 3] == 10) {
+                        headerEnd = i;
+                        break;
+                    }
+                }
+                if (headerMs.Length > 131072) break; // 128KB limit
+            }
+
+            if (headerEnd == -1) {
+                client.Close();
+                return;
+            }
+
+            byte[] allBytes = headerMs.ToArray();
+            string headerText = Encoding.ASCII.GetString(allBytes, 0, headerEnd);
+            string[] lines = headerText.Split(new[] { "\r\n" }, StringSplitOptions.None);
+            if (lines.Length == 0) { client.Close(); return; }
+
+            string[] reqParts = lines[0].Split(' ');
+            string method = reqParts[0].ToUpperInvariant();
+            string rawUrl = reqParts.Length > 1 ? reqParts[1] : "/";
+
+            string urlPath = rawUrl;
+            string queryString = "";
+            int qIdx = rawUrl.IndexOf('?');
+            if (qIdx >= 0) {
+                urlPath = rawUrl.Substring(0, qIdx);
+                queryString = rawUrl.Substring(qIdx + 1);
+            }
+
+            // Parse query string
+            Dictionary<string, string> queryParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrEmpty(queryString)) {
+                string[] pairs = queryString.Split('&');
+                foreach (string pair in pairs) {
+                    int eq = pair.IndexOf('=');
+                    if (eq >= 0) {
+                        string k = Uri.UnescapeDataString(pair.Substring(0, eq));
+                        string v = Uri.UnescapeDataString(pair.Substring(eq + 1));
+                        queryParams[k] = v;
+                    } else {
+                        queryParams[Uri.UnescapeDataString(pair)] = "";
+                    }
                 }
             }
-            $cat = @{ success = $true; folder = "website_images"; files = $fileList }
-            $catJson = $cat | ConvertTo-Json -Depth 5
-            [System.IO.File]::WriteAllText((Join-Path $dir "images.json"), $catJson, [System.Text.Encoding]::UTF8)
-            [System.IO.File]::WriteAllText((Join-Path $dir "manifest.json"), $catJson, [System.Text.Encoding]::UTF8)
+
+            // Parse Content-Length
+            int contentLength = 0;
+            foreach (string line in lines) {
+                if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase)) {
+                    int.TryParse(line.Substring(15).Trim(), out contentLength);
+                }
+            }
+
+            // Read request body if needed
+            byte[] bodyBytes = new byte[0];
+            if (contentLength > 0) {
+                int bodyStart = headerEnd + 4;
+                int alreadyRead = allBytes.Length - bodyStart;
+                MemoryStream bodyMs = new MemoryStream();
+                if (alreadyRead > 0) {
+                    bodyMs.Write(allBytes, bodyStart, Math.Min(alreadyRead, contentLength));
+                }
+                int remaining = contentLength - alreadyRead;
+                while (remaining > 0) {
+                    int toRead = Math.Min(buf.Length, remaining);
+                    int r = stream.Read(buf, 0, toRead);
+                    if (r <= 0) break;
+                    bodyMs.Write(buf, 0, r);
+                    remaining -= r;
+                }
+                bodyBytes = bodyMs.ToArray();
+            }
+
+            // 1. OPTIONS Preflight
+            if (method == "OPTIONS") {
+                SendResponse(stream, 200, "OK", "text/plain", new byte[0]);
+                client.Close();
+                return;
+            }
+
+            // Normalize URL path
+            string normPath = urlPath.ToLowerInvariant();
+
+            // 2. Health / Status Endpoint
+            if (method == "GET" && (normPath == "/api/status" || normPath == "/api/health")) {
+                string statJson = "{\"status\":\"ok\",\"success\":true,\"server\":\"Bagan Medical Hall Server\",\"port\":" + _port + ",\"folder\":\"website_images\"}";
+                SendResponse(stream, 200, "OK", "application/json; charset=utf-8", Encoding.UTF8.GetBytes(statJson));
+                client.Close();
+                return;
+            }
+
+            // 3. Media Folders Endpoint (Amrit Media Center Model)
+            if (method == "GET" && (normPath == "/api/admin/media/folders" || normPath == "/api/media/folders")) {
+                string foldersJson = "{\"status\":\"ok\",\"success\":true,\"folders\":[" +
+                    "{\"id\":\"folder-products\",\"name\":\"Products\",\"slug\":\"products\"}," +
+                    "{\"id\":\"folder-banners\",\"name\":\"Banners\",\"slug\":\"banners\"}," +
+                    "{\"id\":\"folder-categories\",\"name\":\"Categories\",\"slug\":\"categories\"}," +
+                    "{\"id\":\"folder-brands\",\"name\":\"Brands\",\"slug\":\"brands\"}," +
+                    "{\"id\":\"folder-services\",\"name\":\"Services\",\"slug\":\"services\"}," +
+                    "{\"id\":\"folder-general\",\"name\":\"General\",\"slug\":\"general\"}" +
+                "]}";
+                SendResponse(stream, 200, "OK", "application/json; charset=utf-8", Encoding.UTF8.GetBytes(foldersJson));
+                client.Close();
+                return;
+            }
+
+            // 4. Media Listing Endpoint (Amrit Media Center Model + Bagan Files Compatibility)
+            if (method == "GET" && (normPath == "/api/admin/media" || normPath == "/api/media" || normPath == "/upload.php") &&
+                (!queryParams.ContainsKey("action") || queryParams["action"] != "delete")) {
+                
+                string jsonResp = BuildMediaCatalogJson();
+                SendResponse(stream, 200, "OK", "application/json; charset=utf-8", Encoding.UTF8.GetBytes(jsonResp));
+                client.Close();
+                return;
+            }
+
+            // 5. Media Delete Endpoint (Amrit Model: DELETE /api/admin/media/:id or /api/media?filename=...)
+            if ((method == "DELETE" || (queryParams.ContainsKey("action") && queryParams["action"] == "delete")) &&
+                (normPath.StartsWith("/api/admin/media") || normPath.StartsWith("/api/media") || normPath == "/upload.php")) {
+                
+                string filenameToDelete = null;
+                if (queryParams.ContainsKey("filename")) {
+                    filenameToDelete = queryParams["filename"];
+                } else if (queryParams.ContainsKey("id")) {
+                    filenameToDelete = queryParams["id"];
+                } else {
+                    // Extract from URL path: /api/admin/media/filename.webp
+                    string[] parts = urlPath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length >= 3) {
+                        filenameToDelete = parts[parts.Length - 1];
+                    }
+                }
+
+                if (string.IsNullOrEmpty(filenameToDelete) && bodyBytes.Length > 0) {
+                    string bStr = Encoding.UTF8.GetString(bodyBytes);
+                    filenameToDelete = ExtractJsonField(bStr, "filename") ?? ExtractJsonField(bStr, "id");
+                }
+
+                string delMsg = "File already deleted";
+                if (!string.IsNullOrEmpty(filenameToDelete)) {
+                    string safeName = Path.GetFileName(filenameToDelete);
+                    string target = Path.Combine(_imageDir, safeName);
+                    if (File.Exists(target)) {
+                        try {
+                            File.Delete(target);
+                            delMsg = "File " + safeName + " deleted permanently from website_images/";
+                            Console.WriteLine("[DELETE] Removed: website_images/" + safeName);
+                        } catch (Exception ex) {
+                            delMsg = ex.Message;
+                        }
+                    }
+                    UpdateManifestOnDisk();
+                }
+
+                string delJson = "{\"status\":\"ok\",\"success\":true,\"message\":\"" + delMsg.Replace("\"", "\\\"") + "\"}";
+                SendResponse(stream, 200, "OK", "application/json; charset=utf-8", Encoding.UTF8.GetBytes(delJson));
+                client.Close();
+                return;
+            }
+
+            // 6. Settings Save Endpoint
+            if (method == "POST" && (normPath == "/api/settings" || (normPath == "/upload.php" && queryParams.ContainsKey("action") && queryParams["action"] == "save_settings"))) {
+                string bodyStr = Encoding.UTF8.GetString(bodyBytes);
+                try {
+                    string settingsPath = Path.Combine(_imageDir, "settings.json");
+                    File.WriteAllText(settingsPath, bodyStr, Encoding.UTF8);
+                    string resp = "{\"status\":\"ok\",\"success\":true,\"message\":\"Settings saved to website_images/settings.json in real time\"}";
+                    SendResponse(stream, 200, "OK", "application/json; charset=utf-8", Encoding.UTF8.GetBytes(resp));
+                } catch (Exception ex) {
+                    string errResp = "{\"status\":\"error\",\"success\":false,\"message\":\"" + ex.Message.Replace("\"", "\\\"") + "\"}";
+                    SendResponse(stream, 500, "Internal Server Error", "application/json; charset=utf-8", Encoding.UTF8.GetBytes(errResp));
+                }
+                client.Close();
+                return;
+            }
+
+            // 7. Image Upload Endpoint (Amrit Model + WebP Conversion & Real-Time Disk Persistence)
+            if (method == "POST" && (normPath == "/api/admin/media/upload" || normPath == "/api/media/upload" || normPath == "/api/upload" || normPath == "/upload.php")) {
+                string bodyStr = Encoding.UTF8.GetString(bodyBytes);
+                string filenameParam = ExtractJsonField(bodyStr, "filename") ?? ("image_" + DateTime.Now.ToString("yyyyMMddHHmmss") + ".webp");
+                string base64Data = ExtractJsonField(bodyStr, "data");
+
+                if (!string.IsNullOrEmpty(base64Data)) {
+                    if (base64Data.Contains(",")) {
+                        base64Data = base64Data.Substring(base64Data.IndexOf(',') + 1);
+                    }
+                    byte[] imgBytes = Convert.FromBase64String(base64Data);
+
+                    string rawBase = Path.GetFileNameWithoutExtension(filenameParam);
+                    StringBuilder cleanSb = new StringBuilder();
+                    foreach (char c in rawBase) {
+                        if (char.IsLetterOrDigit(c) || c == '_' || c == '-') cleanSb.Append(c);
+                        else cleanSb.Append('_');
+                    }
+                    string cleanBase = cleanSb.ToString();
+                    if (string.IsNullOrEmpty(cleanBase)) cleanBase = "image_" + DateTime.Now.ToString("yyyyMMddHHmmss");
+                    string finalName = cleanBase + ".webp";
+                    string finalPath = Path.Combine(_imageDir, finalName);
+
+                    File.WriteAllBytes(finalPath, imgBytes);
+                    UpdateManifestOnDisk();
+
+                    Console.WriteLine("[UPLOAD] Saved to website_images/" + finalName + " (" + imgBytes.Length + " bytes, WebP)");
+
+                    string respJson = "{\"status\":\"ok\",\"success\":true,\"message\":\"Media uploaded and saved to website_images/ in real time\",\"filename\":\"" + finalName + "\",\"path\":\"website_images/" + finalName + "\",\"media\":[{\"id\":\"media-" + Guid.NewGuid().ToString("N").Substring(0, 8) + "\",\"filename\":\"" + finalName + "\",\"originalFilename\":\"" + filenameParam + "\",\"filePath\":\"website_images/" + finalName + "\",\"url\":\"website_images/" + finalName + "\",\"mimeType\":\"image/webp\",\"fileSize\":" + imgBytes.Length + ",\"folderId\":\"folder-general\"}]}";
+                    SendResponse(stream, 200, "OK", "application/json; charset=utf-8", Encoding.UTF8.GetBytes(respJson));
+                } else {
+                    string errJson = "{\"status\":\"error\",\"success\":false,\"message\":\"No image payload provided\"}";
+                    SendResponse(stream, 400, "Bad Request", "application/json; charset=utf-8", Encoding.UTF8.GetBytes(errJson));
+                }
+                client.Close();
+                return;
+            }
+
+            // 8. Static File Serving
+            if (normPath == "/" || string.IsNullOrWhiteSpace(normPath)) {
+                normPath = "/index.html";
+            }
+            string rel = Uri.UnescapeDataString(normPath).TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+            string localFile = Path.GetFullPath(Path.Combine(_root, rel));
+
+            if (localFile.StartsWith(_root, StringComparison.OrdinalIgnoreCase) && File.Exists(localFile)) {
+                string ext = Path.GetExtension(localFile);
+                string mime = "application/octet-stream";
+                if (MimeTypes.ContainsKey(ext)) mime = MimeTypes[ext];
+                byte[] fileData = File.ReadAllBytes(localFile);
+                SendResponse(stream, 200, "OK", mime, fileData);
+            } else {
+                byte[] notFound = Encoding.UTF8.GetBytes("404 Not Found: " + normPath);
+                SendResponse(stream, 404, "Not Found", "text/plain; charset=utf-8", notFound);
+            }
+            client.Close();
+        } catch {
+            try { client.Close(); } catch {}
         }
-    } catch {}
-}
+    }
 
-# Initial manifest sync on startup
-Update-ImageManifest $imageDir
+    private string BuildMediaCatalogJson() {
+        List<string> fileEntries = new List<string>();
+        List<string> amritMedia = new List<string>();
 
-$mimeTypes = @{
-    ".html" = "text/html; charset=utf-8"
-    ".htm"  = "text/html; charset=utf-8"
-    ".css"  = "text/css; charset=utf-8"
-    ".js"   = "application/javascript; charset=utf-8"
-    ".json" = "application/json; charset=utf-8"
-    ".svg"  = "image/svg+xml"
-    ".png"  = "image/png"
-    ".jpg"  = "image/jpeg"
-    ".jpeg" = "image/jpeg"
-    ".gif"  = "image/gif"
-    ".webp" = "image/webp"
-    ".ico"  = "image/x-icon"
-    ".woff" = "font/woff"
-    ".woff2"= "font/woff2"
-    ".ttf"  = "font/ttf"
-}
+        if (Directory.Exists(_imageDir)) {
+            string[] files = Directory.GetFiles(_imageDir);
+            foreach (string f in files) {
+                string name = Path.GetFileName(f);
+                if (string.Equals(name, "bagan-medical-hall-logo.png", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(name, "images.json", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(name, "manifest.json", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(name, "settings.json", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith(".")) {
+                    continue;
+                }
+                string ext = Path.GetExtension(name).TrimStart('.').ToLowerInvariant();
+                FileInfo fi = new FileInfo(f);
+                long sz = fi.Length;
+                string mod = fi.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss");
+                string title = name.IndexOf("bagan", StringComparison.OrdinalIgnoreCase) >= 0 ? "Bagan Medical Hall Official Logo" : "Asset (" + name + ")";
 
-# Bind TCP Listener
-$tcpListener = $null
-try {
-    $tcpListener = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Any, $port)
-    $tcpListener.Start()
-} catch {
-    try {
-        $tcpListener = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Loopback, $port)
-        $tcpListener.Start()
-    } catch {
-        Write-Host "CRITICAL ERROR: Failed to bind to port $port : $($_.Exception.Message)" -ForegroundColor Red
-        exit 1
+                fileEntries.Add(string.Format("{{\"filename\":\"{0}\",\"path\":\"website_images/{0}\",\"size\":{1},\"format\":\"{2}\",\"title\":\"{3}\",\"lastModified\":\"{4}\"}}",
+                    name, sz, ext, title, mod));
+
+                amritMedia.Add(string.Format("{{\"id\":\"med_{0}\",\"filename\":\"{1}\",\"originalFilename\":\"{1}\",\"filePath\":\"website_images/{1}\",\"url\":\"website_images/{1}\",\"mimeType\":\"{2}\",\"fileSize\":{3},\"folderId\":\"folder-general\",\"folderName\":\"General\",\"folderSlug\":\"general\",\"createdAt\":\"{4}\",\"updatedAt\":\"{4}\"}}",
+                    cleanId(name), name, (ext == "webp" ? "image/webp" : "image/" + ext), sz, fi.LastWriteTime.ToString("o")));
+            }
+        }
+
+        return "{\"status\":\"ok\",\"success\":true,\"folder\":\"website_images\",\"total\":" + fileEntries.Count + ",\"media\":[" + string.Join(",", amritMedia.ToArray()) + "],\"files\":[" + string.Join(",", fileEntries.ToArray()) + "]}";
+    }
+
+    private void UpdateManifestOnDisk() {
+        try {
+            string json = BuildMediaCatalogJson();
+            File.WriteAllText(Path.Combine(_imageDir, "images.json"), json, Encoding.UTF8);
+            File.WriteAllText(Path.Combine(_imageDir, "manifest.json"), json, Encoding.UTF8);
+        } catch {}
+    }
+
+    private static string cleanId(string s) {
+        StringBuilder sb = new StringBuilder();
+        foreach (char c in s) {
+            if (char.IsLetterOrDigit(c)) sb.Append(c);
+            else sb.Append('_');
+        }
+        return sb.ToString();
+    }
+
+    private static string ExtractJsonField(string json, string field) {
+        if (string.IsNullOrEmpty(json)) return null;
+        string pattern = "\"" + field + "\"";
+        int idx = json.IndexOf(pattern, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return null;
+        int colon = json.IndexOf(':', idx + pattern.Length);
+        if (colon < 0) return null;
+        int startVal = colon + 1;
+        while (startVal < json.Length && (json[startVal] == ' ' || json[startVal] == '\t' || json[startVal] == '\r' || json[startVal] == '\n')) startVal++;
+        if (startVal >= json.Length) return null;
+
+        if (json[startVal] == '\"') {
+            int endQuote = -1;
+            bool escape = false;
+            for (int i = startVal + 1; i < json.Length; i++) {
+                if (escape) { escape = false; continue; }
+                if (json[i] == '\\') { escape = true; continue; }
+                if (json[i] == '\"') { endQuote = i; break; }
+            }
+            if (endQuote > startVal) {
+                return json.Substring(startVal + 1, endQuote - startVal - 1).Replace("\\\"", "\"").Replace("\\\\", "\\").Replace("\\/", "/");
+            }
+        }
+        return null;
+    }
+
+    private void SendResponse(NetworkStream stream, int statusCode, string statusText, string contentType, byte[] payload) {
+        string headers = "HTTP/1.1 " + statusCode + " " + statusText + "\r\n" +
+            "Content-Type: " + contentType + "\r\n" +
+            "Content-Length: " + payload.Length + "\r\n" +
+            "Access-Control-Allow-Origin: *\r\n" +
+            "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n" +
+            "Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With\r\n" +
+            "Connection: close\r\n\r\n";
+        byte[] hdrBytes = Encoding.ASCII.GetBytes(headers);
+        stream.Write(hdrBytes, 0, hdrBytes.Length);
+        if (payload.Length > 0) {
+            stream.Write(payload, 0, payload.Length);
+        }
+        stream.Flush();
     }
 }
+"@
+
+try {
+    Add-Type -TypeDefinition $csharpSource -Language CSharp
+} catch {
+    Write-Host "C# Compilation: $($_.Exception.Message)"
+}
+
+$server = New-Object BaganMediaHttpServer($root, $imageDir, $port)
+$server.Start()
 
 Write-Host "=================================================================" -ForegroundColor Cyan
-Write-Host "   BAGAN MEDICAL HALL - PHARMACY POS & ACCOUNTING ERP SERVER    " -ForegroundColor Green
+Write-Host "   BAGAN MEDICAL HALL - AMRIT MEDIA CENTER ERP BACKEND SERVER   " -ForegroundColor Green
 Write-Host "=================================================================" -ForegroundColor Cyan
 Write-Host "  URL: http://localhost:$port/" -ForegroundColor Yellow
 Write-Host "  Alternative: http://127.0.0.1:$port/"
-Write-Host "  Root Directory: $root"
-Write-Host "  Images Folder : $imageDir"
-Write-Host "  Real-time File Manager Sync: ACTIVE" -ForegroundColor Green
-Write-Host "  Auto WebP Conversion: ENABLED"
+Write-Host "  Root Directory : $root"
+Write-Host "  Images Folder  : $imageDir"
+Write-Host "  Multi-Threaded Real-Time Sync: ACTIVE" -ForegroundColor Green
+Write-Host "  Amrit Media Model Endpoints: /api/admin/media, /api/media, /api/upload" -ForegroundColor Green
 Write-Host "  Press Ctrl+C to stop the server.`n"
 
 # Launch default browser
@@ -96,292 +464,7 @@ try {
     Start-Process "http://localhost:$port/"
 } catch {}
 
-# Main TCP Loop
+# Keep process alive
 while ($true) {
-    $client = $null
-    try {
-        $client = $tcpListener.AcceptTcpClient()
-        $stream = $client.GetStream()
-        $stream.ReadTimeout = 10000
-        $stream.WriteTimeout = 10000
-
-        # Read HTTP request header
-        $headerMs = New-Object System.IO.MemoryStream
-        $buffer = New-Object byte[] 8192
-        $headerEnd = -1
-
-        while ($headerEnd -eq -1) {
-            $read = $stream.Read($buffer, 0, $buffer.Length)
-            if ($read -le 0) { break }
-            $headerMs.Write($buffer, 0, $read)
-            $all = $headerMs.ToArray()
-            for ($i = 0; $i -le ($all.Length - 4); $i++) {
-                if ($all[$i] -eq 13 -and $all[$i+1] -eq 10 -and $all[$i+2] -eq 13 -and $all[$i+3] -eq 10) {
-                    $headerEnd = $i
-                    break
-                }
-            }
-            if ($headerMs.Length -gt 131072) { break } # 128KB max header length
-        }
-
-        if ($headerEnd -eq -1) {
-            $client.Close()
-            continue
-        }
-
-        $allBytes = $headerMs.ToArray()
-        $headerText = [System.Text.Encoding]::ASCII.GetString($allBytes, 0, $headerEnd)
-        $lines = $headerText -split "\r\n"
-        if ($lines.Length -eq 0) { $client.Close(); continue }
-
-        $reqParts = $lines[0] -split " "
-        $method = $reqParts[0].ToUpper()
-        $rawUrl = if ($reqParts.Length -gt 1) { $reqParts[1] } else { "/" }
-
-        $urlPath = $rawUrl
-        $queryString = ""
-        if ($rawUrl.Contains("?")) {
-            $qParts = $rawUrl.Split("?", 2)
-            $urlPath = $qParts[0]
-            $queryString = $qParts[1]
-        }
-
-        # Parse query string parameters
-        $queryParams = @{}
-        if (![string]::IsNullOrEmpty($queryString)) {
-            foreach ($pair in $queryString.Split("&")) {
-                if ($pair.Contains("=")) {
-                    $kv = $pair.Split("=", 2)
-                    $k = [System.Uri]::UnescapeDataString($kv[0])
-                    $v = [System.Uri]::UnescapeDataString($kv[1])
-                    $queryParams[$k] = $v
-                } else {
-                    $k = [System.Uri]::UnescapeDataString($pair)
-                    $queryParams[$k] = ""
-                }
-            }
-        }
-
-        # Parse Content-Length
-        $contentLength = 0
-        foreach ($line in $lines) {
-            if ($line -match "(?i)^Content-Length:\s*(\d+)") {
-                $contentLength = [int]$matches[1]
-            }
-        }
-
-        # Read full request body
-        $bodyBytes = @()
-        if ($contentLength -gt 0) {
-            $bodyStart = $headerEnd + 4
-            $alreadyRead = $allBytes.Length - $bodyStart
-            $bodyMs = New-Object System.IO.MemoryStream
-            if ($alreadyRead -gt 0) {
-                $bodyMs.Write($allBytes, $bodyStart, [Math]::Min($alreadyRead, $contentLength))
-            }
-            $remaining = $contentLength - $alreadyRead
-            while ($remaining -gt 0) {
-                $toRead = [Math]::Min($buffer.Length, $remaining)
-                $read = $stream.Read($buffer, 0, $toRead)
-                if ($read -le 0) { break }
-                $bodyMs.Write($buffer, 0, $read)
-                $remaining -= $read
-            }
-            $bodyBytes = $bodyMs.ToArray()
-        }
-
-        # Response helper with universal CORS headers
-        $SendResponse = {
-            param($statusCode, $statusText, $contentType, $payloadBytes)
-            $respHdr = "HTTP/1.1 $statusCode $statusText`r`n" +
-                       "Content-Type: $contentType`r`n" +
-                       "Content-Length: $($payloadBytes.Length)`r`n" +
-                       "Access-Control-Allow-Origin: *`r`n" +
-                       "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS`r`n" +
-                       "Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With`r`n" +
-                       "Connection: close`r`n`r`n"
-            $hdrRaw = [System.Text.Encoding]::ASCII.GetBytes($respHdr)
-            $stream.Write($hdrRaw, 0, $hdrRaw.Length)
-            if ($payloadBytes.Length -gt 0) {
-                $stream.Write($payloadBytes, 0, $payloadBytes.Length)
-            }
-            $stream.Flush()
-        }
-
-        # 1. OPTIONS preflight
-        if ($method -eq "OPTIONS") {
-            & $SendResponse 200 "OK" "text/plain" @()
-            $client.Close()
-            continue
-        }
-
-        # 2. Server Status / Health Endpoint
-        if ($method -eq "GET" -and ($urlPath -eq "/api/status" -or $urlPath -eq "/api/health")) {
-            $statObj = @{
-                success = $true
-                status  = "online"
-                server  = "Bagan Medical Hall Server"
-                port    = $port
-                folder  = "website_images"
-                time    = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-            }
-            $statJson = $statObj | ConvertTo-Json
-            $statBytes = [System.Text.Encoding]::UTF8.GetBytes($statJson)
-            & $SendResponse 200 "OK" "application/json; charset=utf-8" $statBytes
-            $client.Close()
-            continue
-        }
-
-        # 3. Media Center Listing Endpoint (GET /api/media or /upload.php)
-        if ($method -eq "GET" -and ($urlPath -eq "/api/media" -or $urlPath -eq "/upload.php") -and $queryParams["action"] -ne "delete") {
-            Update-ImageManifest $imageDir
-            $filesList = @()
-            if (Test-Path $imageDir) {
-                $rawFiles = Get-ChildItem -Path $imageDir -File | Where-Object { 
-                    $_.Extension -match '\.(webp|png|jpg|jpeg|svg|gif|ico)$' -and 
-                    $_.Name -ne 'bagan-medical-hall-logo.png' 
-                }
-                foreach ($f in $rawFiles) {
-                    $ext = $f.Extension.TrimStart('.').ToLower()
-                    $filesList += @{
-                        filename     = $f.Name
-                        path         = "website_images/$($f.Name)"
-                        size         = $f.Length
-                        format       = $ext
-                        title        = if ($f.Name -like "*bagan*") { "Bagan Medical Hall Official Logo" } else { "Asset ($($f.Name))" }
-                        lastModified = $f.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
-                    }
-                }
-            }
-            $listObj = @{ success = $true; folder = "website_images"; files = $filesList }
-            $listJson = $listObj | ConvertTo-Json -Depth 5
-            $listBytes = [System.Text.Encoding]::UTF8.GetBytes($listJson)
-            & $SendResponse 200 "OK" "application/json; charset=utf-8" $listBytes
-            $client.Close()
-            continue
-        }
-
-        # 4. Media Delete Endpoint (DELETE /api/media or /upload.php?action=delete)
-        if (($method -eq "DELETE" -or ($queryParams["action"] -eq "delete")) -and ($urlPath -eq "/api/media" -or $urlPath -eq "/upload.php")) {
-            $delFn = $queryParams["filename"]
-            if ([string]::IsNullOrEmpty($delFn) -and $bodyBytes.Length -gt 0) {
-                try {
-                    $bObj = [System.Text.Encoding]::UTF8.GetString($bodyBytes) | ConvertFrom-Json
-                    if ($bObj.filename) { $delFn = $bObj.filename }
-                } catch {}
-            }
-
-            $delResult = @{ success = $false; message = "Filename parameter required" }
-            if (![string]::IsNullOrEmpty($delFn)) {
-                $safeName = [System.IO.Path]::GetFileName($delFn)
-                $targetFile = Join-Path $imageDir $safeName
-                if (Test-Path $targetFile -PathType Leaf) {
-                    Remove-Item $targetFile -Force -ErrorAction SilentlyContinue
-                    Update-ImageManifest $imageDir
-                    $delResult = @{ success = $true; message = "File deleted successfully"; filename = $safeName }
-                    Write-Host "[DELETE] Removed: website_images/$safeName" -ForegroundColor Yellow
-                } else {
-                    $delResult = @{ success = $true; message = "File already removed from website_images/"; filename = $safeName }
-                }
-            }
-
-            $delJson = $delResult | ConvertTo-Json
-            $delBytes = [System.Text.Encoding]::UTF8.GetBytes($delJson)
-            & $SendResponse 200 "OK" "application/json; charset=utf-8" $delBytes
-            $client.Close()
-            continue
-        }
-
-        # 5. Settings Save Endpoint (POST /api/settings or /upload.php?action=save_settings)
-        if ($method -eq "POST" -and ($urlPath -eq "/api/settings" -or ($urlPath -eq "/upload.php" -and $queryParams["action"] -eq "save_settings"))) {
-            $bodyStr = [System.Text.Encoding]::UTF8.GetString($bodyBytes)
-            $resObj = @{ success = $false; message = "Invalid settings payload" }
-            try {
-                $settingsPath = Join-Path $imageDir "settings.json"
-                [System.IO.File]::WriteAllText($settingsPath, $bodyStr, [System.Text.Encoding]::UTF8)
-                $resObj = @{ success = $true; message = "Settings saved to website_images/settings.json in real time" }
-                Write-Host "[SETTINGS] Updated website_images/settings.json" -ForegroundColor Green
-            } catch {
-                $resObj = @{ success = $false; message = $_.Exception.Message }
-            }
-            $sJson = $resObj | ConvertTo-Json
-            $sBytes = [System.Text.Encoding]::UTF8.GetBytes($sJson)
-            & $SendResponse 200 "OK" "application/json; charset=utf-8" $sBytes
-            $client.Close()
-            continue
-        }
-
-        # 6. Image Upload Endpoint (POST /api/upload or /upload.php)
-        if ($method -eq "POST" -and ($urlPath -eq "/api/upload" -or $urlPath -eq "/upload.php")) {
-            $bodyStr = [System.Text.Encoding]::UTF8.GetString($bodyBytes)
-            $resObj = @{ success = $false; message = "Invalid upload payload" }
-            try {
-                $payload = $bodyStr | ConvertFrom-Json
-                if ($payload -and $payload.filename -and $payload.data) {
-                    $rawBase = [System.IO.Path]::GetFileNameWithoutExtension($payload.filename)
-                    $cleanBase = $rawBase -replace '[^a-zA-Z0-9_\.-]', '_'
-                    if ([string]::IsNullOrWhiteSpace($cleanBase)) {
-                        $cleanBase = "image_" + (Get-Date -Format "yyyyMMddHHmmss")
-                    }
-                    # Automatically enforce .webp extension
-                    $cleanName = "$cleanBase.webp"
-                    $targetPath = Join-Path $imageDir $cleanName
-
-                    $dataStr = [string]$payload.data
-                    if ($dataStr.Contains(",")) {
-                        $dataStr = $dataStr.Split(",")[1]
-                    }
-                    $imgBytes = [System.Convert]::FromBase64String($dataStr)
-                    [System.IO.File]::WriteAllBytes($targetPath, $imgBytes)
-                    Update-ImageManifest $imageDir
-
-                    $resObj = @{
-                        success  = $true
-                        path     = "website_images/$cleanName"
-                        filename = $cleanName
-                        size     = $imgBytes.Length
-                        format   = "webp"
-                        message  = "Saved to website_images/$cleanName in real time"
-                    }
-                    Write-Host "[UPLOAD] Saved: website_images/$cleanName ($($imgBytes.Length) bytes, webp)" -ForegroundColor Green
-                }
-            } catch {
-                $resObj = @{ success = $false; message = $_.Exception.Message }
-                Write-Host "[UPLOAD ERROR] $($_.Exception.Message)" -ForegroundColor Red
-            }
-
-            $uJson = $resObj | ConvertTo-Json
-            $uBytes = [System.Text.Encoding]::UTF8.GetBytes($uJson)
-            & $SendResponse 200 "OK" "application/json; charset=utf-8" $uBytes
-            $client.Close()
-            continue
-        }
-
-        # 7. Static File Serving (Root & Subdirectories)
-        if ($urlPath -eq "/" -or [string]::IsNullOrWhiteSpace($urlPath)) {
-            $urlPath = "/index.html"
-        }
-
-        $relPath = [System.Uri]::UnescapeDataString($urlPath).TrimStart("/").Replace("/", "\")
-        $localPath = Join-Path $root $relPath
-
-        # Security check: Ensure file stays inside project root
-        $fullPath = [System.IO.Path]::GetFullPath($localPath)
-        $fullRoot = [System.IO.Path]::GetFullPath($root)
-
-        if ($fullPath.StartsWith($fullRoot, [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path $fullPath -PathType Leaf)) {
-            $ext = [System.IO.Path]::GetExtension($fullPath).ToLower()
-            $mime = if ($mimeTypes.ContainsKey($ext)) { $mimeTypes[$ext] } else { "application/octet-stream" }
-            $fileBytes = [System.IO.File]::ReadAllBytes($fullPath)
-            & $SendResponse 200 "OK" $mime $fileBytes
-        } else {
-            $notFoundBytes = [System.Text.Encoding]::UTF8.GetBytes("404 Not Found: $urlPath")
-            & $SendResponse 404 "Not Found" "text/plain; charset=utf-8" $notFoundBytes
-        }
-        $client.Close()
-    } catch {
-        if ($client -ne $null) {
-            try { $client.Close() } catch {}
-        }
-    }
+    Start-Sleep -Seconds 1
 }
