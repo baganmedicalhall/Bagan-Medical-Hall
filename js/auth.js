@@ -1256,6 +1256,24 @@ const Auth = {
           </div>
         </div>
 
+        <!-- Real-Time Sync & Server Status Banner -->
+        <div id="media-server-status-bar" style="margin-bottom: 1.25rem; padding: 0.75rem 1rem; border-radius: 8px; background: #f0fdf4; border: 1px solid #bbf7d0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+          <div style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem;">
+            <span id="media-status-dot" style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.2);"></span>
+            <span id="media-status-text" style="color: #166534; font-weight: 600;">
+              🟢 Real-Time File Manager Sync Active: All uploads & deletions sync to <code>website_images/</code> in WebP format
+            </span>
+          </div>
+          <div style="display: flex; gap: 0.4rem; align-items: center;">
+            <button type="button" class="btn btn-outline btn-sm" id="btn-check-server-status" style="font-size: 0.73rem; padding: 4px 10px; background: white;" title="Test live server connectivity">
+              ⚡ Test Server
+            </button>
+            <button type="button" class="btn btn-outline btn-sm" id="btn-pick-media-folder" style="font-size: 0.73rem; padding: 4px 10px; background: white;" title="Connect website_images folder for direct disk writes in browser">
+              📁 Local Folder Handle
+            </button>
+          </div>
+        </div>
+
         <!-- Drag & Drop Upload Zone -->
         <div id="media-center-dropzone" style="border: 2px dashed #94a3b8; border-radius: 10px; padding: 1.25rem; text-align: center; background: #f8fafc; margin-bottom: 1.25rem; cursor: pointer; transition: all 0.2s ease;">
           <div style="font-size: 1.8rem; margin-bottom: 0.25rem;">🖼️</div>
@@ -2614,6 +2632,39 @@ const Auth = {
           App.showToast('Sync completed. Media library is up-to-date with website_images/', 'info');
         }
         this.renderDeveloperHub('media');
+      });
+    }
+
+    // Server Connectivity Check
+    const mcCheckServerBtn = document.getElementById('btn-check-server-status');
+    if (mcCheckServerBtn) {
+      mcCheckServerBtn.addEventListener('click', async () => {
+        App.showToast('Checking server status on http://localhost:8080/...', 'info');
+        const stat = await App.checkServerStatus();
+        const dot = document.getElementById('media-status-dot');
+        const text = document.getElementById('media-status-text');
+        if (stat && stat.online) {
+          if (dot) dot.style.background = '#16a34a';
+          if (text) text.innerHTML = '🟢 Real-Time File Manager Sync Active: Connected to <code>website_images/</code> (Server running on http://localhost:8080)';
+          App.showToast('🟢 Server is ONLINE! Real-time File Manager writes and deletes are active.', 'success');
+        } else {
+          if (dot) dot.style.background = '#f59e0b';
+          if (text) text.innerHTML = '🟡 Offline Mode: Double-click <code>start-app.bat</code> or <code>start-server.bat</code> in project folder for real-time File Manager sync';
+          App.showToast('🟡 Server offline. Run start-app.bat to enable automatic File Manager saving!', 'warning');
+        }
+      });
+    }
+
+    // Direct Folder Connection via File System Access API
+    const mcPickFolderBtn = document.getElementById('btn-pick-media-folder');
+    if (mcPickFolderBtn) {
+      mcPickFolderBtn.addEventListener('click', async () => {
+        const res = await App.connectLocalImageDirectory();
+        if (res && res.success) {
+          const text = document.getElementById('media-status-text');
+          if (text) text.innerHTML = `🟢 Direct Folder Connected: <code>${res.name}</code> (Browser writes directly to disk in File Manager)`;
+          App.showToast(`Connected directly to "${res.name}" folder! Real-time disk writes enabled.`, 'success');
+        }
       });
     }
 

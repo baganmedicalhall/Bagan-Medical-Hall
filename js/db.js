@@ -732,15 +732,6 @@ const DEFAULT_MEDIA_LIBRARY = [
     title: 'Bagan Medical Hall Official Logo (High-Fidelity WebP)'
   },
   {
-    id: 'med_bagan_logo_png',
-    filename: 'bagan-medical-hall-logo.png',
-    path: 'website_images/bagan-medical-hall-logo.png',
-    size: 77913,
-    format: 'png',
-    uploadedAt: 'Preloaded Asset',
-    title: 'Bagan Medical Hall Official Logo (Original PNG)'
-  },
-  {
     id: 'med_default_colored',
     filename: 'default-logo-colored.svg',
     path: 'website_images/default-logo-colored.svg',
@@ -1181,7 +1172,10 @@ class PharmacyDatabase {
       const stored = await BaganMediaStore.getAllMedia();
       if (stored && stored.length > 0) {
         if (!this.data.mediaLibrary) this.data.mediaLibrary = [];
+        const deleted = this.data.deletedMedia || [];
         stored.forEach(img => {
+          if (img.filename === 'bagan-medical-hall-logo.png') return;
+          if (deleted.includes(img.filename)) return;
           const idx = this.data.mediaLibrary.findIndex(m => m.filename === img.filename);
           if (idx > -1) {
             if (img.dataUrl) this.data.mediaLibrary[idx].dataUrl = img.dataUrl;
@@ -1282,10 +1276,24 @@ class PharmacyDatabase {
           }
           parsed.globalSettings.logoData = parsed.globalSettings.logoColoredData;
         }
+        if (!parsed.deletedMedia || !Array.isArray(parsed.deletedMedia)) {
+          parsed.deletedMedia = [];
+        }
+        if (!parsed.deletedMedia.includes('bagan-medical-hall-logo.png')) {
+          parsed.deletedMedia.push('bagan-medical-hall-logo.png');
+        }
+        if (parsed.mediaLibrary && Array.isArray(parsed.mediaLibrary)) {
+          // Permanently purge any deleted media and the old duplicate png
+          parsed.mediaLibrary = parsed.mediaLibrary.filter(m => 
+            m.filename !== 'bagan-medical-hall-logo.png' && !parsed.deletedMedia.includes(m.filename)
+          );
+        }
         if (!parsed.mediaLibrary || !Array.isArray(parsed.mediaLibrary)) {
-          parsed.mediaLibrary = JSON.parse(JSON.stringify(DEFAULT_MEDIA_LIBRARY));
+          parsed.mediaLibrary = JSON.parse(JSON.stringify(DEFAULT_MEDIA_LIBRARY)).filter(m => !parsed.deletedMedia.includes(m.filename));
         } else {
           DEFAULT_MEDIA_LIBRARY.forEach(def => {
+            if (def.filename === 'bagan-medical-hall-logo.png') return;
+            if (parsed.deletedMedia.includes(def.filename)) return;
             if (!parsed.mediaLibrary.some(m => m.filename === def.filename)) {
               parsed.mediaLibrary.unshift(def);
             }
@@ -1403,6 +1411,7 @@ class PharmacyDatabase {
       globalSettings: JSON.parse(JSON.stringify(DEFAULT_GLOBAL_SETTINGS)),
       staffMembers: JSON.parse(JSON.stringify(DEFAULT_STAFF)),
       mediaLibrary: JSON.parse(JSON.stringify(DEFAULT_MEDIA_LIBRARY)),
+      deletedMedia: ['bagan-medical-hall-logo.png'],
       loginPageSettings: JSON.parse(JSON.stringify(DEFAULT_LOGIN_PAGE_SETTINGS)),
       staffUiSettings: JSON.parse(JSON.stringify(DEFAULT_STAFF_UI_SETTINGS)),
       accounts: JSON.parse(JSON.stringify(DEFAULT_ACCOUNTS)),
@@ -1554,6 +1563,10 @@ class PharmacyDatabase {
 
   addMediaItem(item) {
     if (!this.data.mediaLibrary) this.data.mediaLibrary = JSON.parse(JSON.stringify(DEFAULT_MEDIA_LIBRARY));
+    if (!this.data.deletedMedia) this.data.deletedMedia = [];
+    if (item.filename && this.data.deletedMedia.includes(item.filename)) {
+      this.data.deletedMedia = this.data.deletedMedia.filter(fn => fn !== item.filename);
+    }
     const idx = this.data.mediaLibrary.findIndex(m => m.filename === item.filename);
     if (idx > -1) {
       this.data.mediaLibrary[idx] = { ...this.data.mediaLibrary[idx], ...item };
@@ -1571,8 +1584,14 @@ class PharmacyDatabase {
     if (!this.data.mediaLibrary) return;
     const target = this.data.mediaLibrary.find(m => m.id === idOrFilename || m.filename === idOrFilename);
     const fn = target ? target.filename : idOrFilename;
-    this.data.mediaLibrary = this.data.mediaLibrary.filter(m => m.id !== idOrFilename && m.filename !== idOrFilename);
-    BaganMediaStore.deleteMedia(fn);
+    if (!this.data.deletedMedia) this.data.deletedMedia = [];
+    if (fn && !this.data.deletedMedia.includes(fn)) {
+      this.data.deletedMedia.push(fn);
+    }
+    this.data.mediaLibrary = this.data.mediaLibrary.filter(m => m.id !== idOrFilename && m.filename !== idOrFilename && m.filename !== fn);
+    if (typeof BaganMediaStore !== 'undefined' && BaganMediaStore.deleteMedia) {
+      BaganMediaStore.deleteMedia(fn);
+    }
     this.save();
   }
 

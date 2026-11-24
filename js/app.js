@@ -556,6 +556,21 @@ const App = {
       } catch (_) {}
     }
 
+    // Direct folder handle write fallback if folder selected
+    if (window.__mediaDirectoryHandle) {
+      try {
+        const fileHandle = await window.__mediaDirectoryHandle.getFileHandle(webpFilename, { create: true });
+        const writable = await fileHandle.createWritable();
+        const bRes = await fetch(webpDataUrl);
+        const bBlob = await bRes.blob();
+        await writable.write(bBlob);
+        await writable.close();
+        savedOnServer = true;
+      } catch (err) {
+        console.warn('Direct directory write:', err);
+      }
+    }
+
     // 4. Construct Media Item Metadata
     const resultItem = {
       id: 'med_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
@@ -592,7 +607,14 @@ const App = {
       await BaganMediaStore.deleteMedia(filename);
     }
 
-    // 2. Remove physical file from website_images/ directory on server
+    // 2. Direct folder handle delete if active
+    if (window.__mediaDirectoryHandle) {
+      try {
+        await window.__mediaDirectoryHandle.removeEntry(filename);
+      } catch (_) {}
+    }
+
+    // 3. Remove physical file from website_images/ directory on server
     const endpoints = [
       `/api/media?filename=${encodeURIComponent(filename)}`,
       `upload.php?action=delete&filename=${encodeURIComponent(filename)}`,
@@ -607,6 +629,45 @@ const App = {
       } catch (_) {}
     }
     return true;
+  },
+
+  /* -------------------------------------------------------------
+   * SERVER HEALTH & STATUS CHECK
+   * ------------------------------------------------------------- */
+  async checkServerStatus() {
+    const urls = ['http://localhost:8080/api/status', '/api/status'];
+    for (const u of urls) {
+      try {
+        const res = await fetch(u, { method: 'GET', mode: 'cors' });
+        if (res.ok) {
+          const d = await res.json();
+          return { online: true, port: 8080, ...d };
+        }
+      } catch (_) {}
+    }
+    return { online: false };
+  },
+
+  /* -------------------------------------------------------------
+   * FILE SYSTEM DIRECTORY PICKER FALLBACK
+   * ------------------------------------------------------------- */
+  async connectLocalImageDirectory() {
+    if ('showDirectoryPicker' in window) {
+      try {
+        const handle = await window.showDirectoryPicker({
+          id: 'bagan_images_folder',
+          mode: 'readwrite',
+          startIn: 'documents'
+        });
+        if (handle) {
+          window.__mediaDirectoryHandle = handle;
+          return { success: true, name: handle.name };
+        }
+      } catch (e) {
+        if (e.name !== 'AbortError') console.warn('Picker error:', e);
+      }
+    }
+    return { success: false };
   },
 
   /* -------------------------------------------------------------
@@ -636,6 +697,8 @@ const App = {
           const data = await res.json();
           if (data && data.success && Array.isArray(data.files)) {
             data.files.forEach(f => {
+              if (f.filename === 'bagan-medical-hall-logo.png') return;
+              if (pharmacyDB.data && pharmacyDB.data.deletedMedia && pharmacyDB.data.deletedMedia.includes(f.filename)) return;
               pharmacyDB.addMediaItem({
                 id: 'med_' + f.filename.replace(/[^a-zA-Z0-9]/g, '_'),
                 filename: f.filename,
