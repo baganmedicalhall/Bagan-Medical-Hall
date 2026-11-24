@@ -723,6 +723,24 @@ const DEFAULT_FALLBACK_LOGO_DATA_URI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz
 
 const DEFAULT_MEDIA_LIBRARY = [
   {
+    id: 'med_bagan_logo_webp',
+    filename: 'bagan-medical-hall-logo.webp',
+    path: 'website_images/bagan-medical-hall-logo.webp',
+    size: 28944,
+    format: 'webp',
+    uploadedAt: 'Preloaded Asset',
+    title: 'Bagan Medical Hall Official Logo (High-Fidelity WebP)'
+  },
+  {
+    id: 'med_bagan_logo_png',
+    filename: 'bagan-medical-hall-logo.png',
+    path: 'website_images/bagan-medical-hall-logo.png',
+    size: 77913,
+    format: 'png',
+    uploadedAt: 'Preloaded Asset',
+    title: 'Bagan Medical Hall Official Logo (Original PNG)'
+  },
+  {
     id: 'med_default_colored',
     filename: 'default-logo-colored.svg',
     path: 'website_images/default-logo-colored.svg',
@@ -876,15 +894,15 @@ const DEFAULT_GLOBAL_SETTINGS = {
   tagline: 'Your Trusted Pharmacy & Clinical Dispensary',
   logo: 'BMH', // text emblem
   logoType: 'image', // 'image' or 'text'
-  logoColored: 'website_images/default-logo-colored.svg', // Coloured logo for light backgrounds (receipts, white card)
-  logoColoredData: DEFAULT_COLORED_LOGO_DATA_URI,
-  logoWhite: 'website_images/default-logo-white.svg', // White logo for dark backgrounds (sidebar)
-  logoWhiteData: DEFAULT_WHITE_LOGO_DATA_URI,
+  logoColored: 'website_images/bagan-medical-hall-logo.webp', // Coloured logo for light backgrounds (receipts, white card)
+  logoColoredData: '',
+  logoWhite: 'website_images/bagan-medical-hall-logo.webp', // White logo for dark backgrounds (sidebar)
+  logoWhiteData: '',
   fallbackLogoImage: 'website_images/default-logo-fallback.svg', // Image for fallback logo
   fallbackLogoData: DEFAULT_FALLBACK_LOGO_DATA_URI,
   fallbackType: 'image', // 'image' or 'text'
-  logoImage: 'website_images/default-logo-colored.svg', // legacy alias
-  logoData: DEFAULT_COLORED_LOGO_DATA_URI,
+  logoImage: 'website_images/bagan-medical-hall-logo.webp', // legacy alias
+  logoData: '',
   primaryColor: '#0284c7',
   secondaryColor: '#0f766e',
   greetingMessage: 'Welcome to Bagan Medical Hall. Please verify temperature logs and prescriptions carefully.'
@@ -896,7 +914,7 @@ const DEFAULT_LOGIN_PAGE_SETTINGS = {
   tagline: 'Your Trusted Pharmacy & Clinical Dispensary',
   announcement: 'Welcome to Bagan Medical Hall. Please verify temperature logs and prescriptions carefully.',
   logoText: 'BMH',
-  logoImage: 'website_images/default-logo.svg',
+  logoImage: 'website_images/bagan-medical-hall-logo.webp',
   logoType: 'image',
   showTestCredentials: false,
   primaryColor: '#0284c7',
@@ -1254,6 +1272,13 @@ class PharmacyDatabase {
           }
           if (!parsed.globalSettings.fallbackLogoData || parsed.globalSettings.fallbackLogoData.indexOf('utf8') > -1 || parsed.globalSettings.fallbackLogoData.indexOf('<svg') > -1) {
             parsed.globalSettings.fallbackLogoData = cachedFb || DEFAULT_FALLBACK_LOGO_DATA_URI;
+          }
+          if (!parsed.globalSettings.logoColored || parsed.globalSettings.logoColored === 'website_images/default-logo-colored.svg') {
+            parsed.globalSettings.logoColored = 'website_images/bagan-medical-hall-logo.webp';
+            parsed.globalSettings.logoImage = 'website_images/bagan-medical-hall-logo.webp';
+          }
+          if (!parsed.globalSettings.logoWhite || parsed.globalSettings.logoWhite === 'website_images/default-logo-white.svg') {
+            parsed.globalSettings.logoWhite = 'website_images/bagan-medical-hall-logo.webp';
           }
           parsed.globalSettings.logoData = parsed.globalSettings.logoColoredData;
         }

@@ -610,40 +610,88 @@ const App = {
   },
 
   /* -------------------------------------------------------------
-   * SYNC MEDIA LIBRARY FROM SERVER (website_images/)
+   * SYNC MEDIA LIBRARY & SETTINGS FROM website_images/ DIRECTORY
+   * Directly queries website_images/images.json and website_images/settings.json
+   * so that ANY new browser, incognito window, or device immediately gets all
+   * uploaded assets and active logos permanently without relying on PHP.
    * ------------------------------------------------------------- */
   async syncMediaLibraryFromServer() {
-    try {
-      const endpoints = [
-        '/api/media',
-        'upload.php',
-        'http://localhost:8080/api/media',
-        'http://localhost:8080/upload.php'
-      ];
-      for (const ep of endpoints) {
-        try {
-          const res = await fetch(ep, { method: 'GET' });
-          if (res.ok) {
-            const data = await res.json();
-            if (data && data.success && Array.isArray(data.files)) {
-              let addedCount = 0;
-              data.files.forEach(f => {
-                const added = pharmacyDB.addMediaItem({
-                  id: 'med_' + f.filename.replace(/[^a-zA-Z0-9]/g, '_'),
-                  filename: f.filename,
-                  path: f.path || ('website_images/' + f.filename),
-                  size: f.size || 0,
-                  uploadedAt: f.lastModified || new Date().toISOString()
-                });
-                if (added) addedCount++;
+    let syncedAny = false;
+    let fileCount = 0;
+
+    // 1. Fetch static images.json manifest directly from website_images/ directory
+    const manifestPaths = [
+      'website_images/images.json',
+      'website_images/manifest.json',
+      '/api/media',
+      'upload.php',
+      'http://localhost:8080/api/media',
+      'http://localhost:8080/upload.php'
+    ];
+
+    for (const ep of manifestPaths) {
+      try {
+        const res = await fetch(ep, { method: 'GET' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.success && Array.isArray(data.files)) {
+            data.files.forEach(f => {
+              pharmacyDB.addMediaItem({
+                id: 'med_' + f.filename.replace(/[^a-zA-Z0-9]/g, '_'),
+                filename: f.filename,
+                path: f.path || ('website_images/' + f.filename),
+                size: f.size || 0,
+                format: f.format || (f.filename.endsWith('.webp') ? 'webp' : 'image'),
+                uploadedAt: f.lastModified || 'Preloaded'
               });
-              return { success: true, count: data.files.length, added: addedCount };
-            }
+            });
+            syncedAny = true;
+            fileCount = data.files.length;
+            break;
           }
-        } catch (_) {}
+        }
+      } catch (_) {}
+    }
+
+    // 2. Fetch static settings.json from website_images/ directory to restore active logos universally
+    try {
+      const sRes = await fetch('website_images/settings.json');
+      if (sRes.ok) {
+        const sData = await sRes.json();
+        if (sData && sData.logoColored) {
+          pharmacyDB.updateGlobalSettings({
+            logoColored: sData.logoColored,
+            logoWhite: sData.logoWhite || sData.logoColored,
+            logoImage: sData.logoColored,
+            fallbackLogoImage: sData.fallbackLogoImage || 'website_images/default-logo-fallback.svg'
+          });
+        }
       }
     } catch (_) {}
-    return { success: false, count: 0 };
+
+    this.refreshBrandLogos();
+    return { success: syncedAny, count: fileCount };
+  },
+
+  /* -------------------------------------------------------------
+   * SAVE ACTIVE LOGO CONFIG TO website_images/settings.json
+   * ------------------------------------------------------------- */
+  async saveLogoSettingsToServer(settings) {
+    const endpoints = [
+      '/api/settings',
+      'upload.php?action=save_settings',
+      'http://localhost:8080/api/settings',
+      'http://localhost:8080/upload.php?action=save_settings'
+    ];
+    for (const ep of endpoints) {
+      try {
+        await fetch(ep, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(settings)
+        });
+      } catch (_) {}
+    }
   },
 
   /* -------------------------------------------------------------
@@ -690,12 +738,12 @@ const App = {
         if (found) src = found.dataUrl;
       }
       if (!src) {
-        src = (g.logoWhite && g.logoWhite !== 'website_images/default-logo-white.svg') ? g.logoWhite : (this.DEFAULT_WHITE_LOGO_DATA_URI || 'website_images/default-logo-white.svg');
+        src = (g.logoWhite && g.logoWhite !== 'website_images/default-logo-white.svg') ? g.logoWhite : 'website_images/bagan-medical-hall-logo.webp';
       }
       return {
         type: 'image',
         src: src,
-        fallbackSrc: this.DEFAULT_WHITE_LOGO_DATA_URI || fallbackImg,
+        fallbackSrc: 'website_images/bagan-medical-hall-logo.png',
         fallbackText: fallbackText,
         fallbackType: fallbackType
       };
@@ -713,12 +761,12 @@ const App = {
         if (found) src = found.dataUrl;
       }
       if (!src) {
-        src = (g.logoColored && g.logoColored !== 'website_images/default-logo-colored.svg') ? g.logoColored : (this.DEFAULT_COLORED_LOGO_DATA_URI || 'website_images/default-logo-colored.svg');
+        src = (g.logoColored && g.logoColored !== 'website_images/default-logo-colored.svg') ? g.logoColored : 'website_images/bagan-medical-hall-logo.webp';
       }
       return {
         type: 'image',
         src: src,
-        fallbackSrc: this.DEFAULT_COLORED_LOGO_DATA_URI || fallbackImg,
+        fallbackSrc: 'website_images/bagan-medical-hall-logo.png',
         fallbackText: fallbackText,
         fallbackType: fallbackType
       };

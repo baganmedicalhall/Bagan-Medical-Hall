@@ -1242,13 +1242,16 @@ const Auth = {
               <span>📸</span> Media Center & Asset Management
             </h2>
             <p style="font-size: 0.8rem; color: #64748b; margin: 0;">
-              All images are securely stored in the <code>website_images/</code> folder and browser storage. Easily browse, upload, preview, and set any image as Coloured Logo, White Logo, or Fallback Logo.
+              All images and logos are permanently stored in the project's <code>website_images/</code> directory (with <code>images.json</code> and <code>settings.json</code>) so they persist permanently and fetch across every new browser and device without losing quality.
             </p>
           </div>
-          <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+            <button type="button" class="btn btn-outline" id="btn-sync-media-folder" style="font-size: 0.82rem;" title="Scan website_images/ directory on disk and synchronize all images">
+              🔄 Sync from website_images/
+            </button>
             <input type="file" id="media-center-file-input" accept="image/*" multiple style="display: none;">
             <button class="btn btn-primary" id="btn-media-center-upload" style="font-size: 0.85rem;">
-              ${getIcon('upload')} Upload New to website_images/
+              ${getIcon('upload')} Upload New (Auto-Convert to WebP)
             </button>
           </div>
         </div>
@@ -2316,6 +2319,15 @@ const Auth = {
         if (typeof App !== 'undefined' && App.refreshBrandLogos) {
           App.refreshBrandLogos();
         }
+        if (typeof App !== 'undefined' && App.saveLogoSettingsToServer) {
+          App.saveLogoSettingsToServer({
+            pharmacyName: name,
+            logoColored,
+            logoWhite,
+            fallbackLogoImage,
+            logoType: 'image'
+          });
+        }
         const brandTagline = document.querySelector('.brand-text p');
         if (brandTagline) brandTagline.textContent = tagline;
 
@@ -2514,6 +2526,14 @@ const Auth = {
           logoType: 'image'
         });
         if (typeof App !== 'undefined' && App.refreshBrandLogos) App.refreshBrandLogos();
+        if (typeof App !== 'undefined' && App.saveLogoSettingsToServer) {
+          App.saveLogoSettingsToServer({
+            logoColored: path,
+            logoWhite: pharmacyDB.data.globalSettings.logoWhite,
+            fallbackLogoImage: pharmacyDB.data.globalSettings.fallbackLogoImage,
+            logoType: 'image'
+          });
+        }
         App.showToast(`Set ${path} as Coloured Logo!`, 'success');
         this.renderDeveloperHub('media');
       });
@@ -2531,6 +2551,14 @@ const Auth = {
         });
         // Update logos immediately
         if (typeof App !== 'undefined' && App.refreshBrandLogos) App.refreshBrandLogos();
+        if (typeof App !== 'undefined' && App.saveLogoSettingsToServer) {
+          App.saveLogoSettingsToServer({
+            logoWhite: path,
+            logoColored: pharmacyDB.data.globalSettings.logoColored,
+            fallbackLogoImage: pharmacyDB.data.globalSettings.fallbackLogoImage,
+            logoType: 'image'
+          });
+        }
         App.showToast(`Set ${path} as White Logo!`, 'success');
         this.renderDeveloperHub('media');
       });
@@ -2547,6 +2575,14 @@ const Auth = {
           fallbackType: 'image'
         });
         if (typeof App !== 'undefined' && App.refreshBrandLogos) App.refreshBrandLogos();
+        if (typeof App !== 'undefined' && App.saveLogoSettingsToServer) {
+          App.saveLogoSettingsToServer({
+            fallbackLogoImage: path,
+            logoColored: pharmacyDB.data.globalSettings.logoColored,
+            logoWhite: pharmacyDB.data.globalSettings.logoWhite,
+            logoType: 'image'
+          });
+        }
         App.showToast(`Set ${path} as Fallback Logo Image!`, 'success');
         this.renderDeveloperHub('media');
       });

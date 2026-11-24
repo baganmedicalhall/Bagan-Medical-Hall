@@ -1,0 +1,8 @@
+﻿{
+    "logoWhite":  "website_images/bagan-medical-hall-logo.webp",
+    "pharmacyName":  "Bagan Medical Hall",
+    "logoColored":  "website_images/bagan-medical-hall-logo.webp",
+    "logoImage":  "website_images/bagan-medical-hall-logo.webp",
+    "logoType":  "image",
+    "fallbackLogoImage":  "website_images/default-logo-fallback.svg"
+}

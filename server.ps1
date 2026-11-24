@@ -6,6 +6,33 @@ if (!(Test-Path $imageDir)) {
     New-Item -ItemType Directory -Path $imageDir -Force | Out-Null
 }
 
+function Update-ImageManifest {
+    param($dir)
+    try {
+        if (Test-Path $dir) {
+            $rawFiles = Get-ChildItem -Path $dir -File | Where-Object { $_.Extension -match '\.(webp|png|jpg|jpeg|svg|gif|ico)$' }
+            $fileList = @()
+            foreach ($f in $rawFiles) {
+                $fileList += @{
+                    filename     = $f.Name
+                    path         = "website_images/$($f.Name)"
+                    size         = $f.Length
+                    format       = $f.Extension.TrimStart('.').ToLower()
+                    title        = if ($f.Name -like "*bagan*") { "Bagan Medical Hall Official Logo" } else { "Asset ($($f.Name))" }
+                    lastModified = $f.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
+                }
+            }
+            $cat = @{ success = $true; folder = "website_images"; files = $fileList }
+            $catJson = $cat | ConvertTo-Json -Depth 5
+            [System.IO.File]::WriteAllText((Join-Path $dir "images.json"), $catJson, [System.Text.Encoding]::UTF8)
+            [System.IO.File]::WriteAllText((Join-Path $dir "manifest.json"), $catJson, [System.Text.Encoding]::UTF8)
+        }
+    } catch {}
+}
+
+# Ensure static manifest exists on server startup
+Update-ImageManifest $imageDir
+
 $mimeTypes = @{
     ".html" = "text/html; charset=utf-8"
     ".htm"  = "text/html; charset=utf-8"
@@ -23,6 +50,7 @@ $mimeTypes = @{
 
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:$port/")
+try { $listener.Prefixes.Add("http://127.0.0.1:$port/") } catch {}
 
 try {
     $listener.Start()
@@ -103,12 +131,38 @@ while ($listener.IsListening) {
                 }
             }
 
+            Update-ImageManifest $imageDir
             $delJson = $resObj | ConvertTo-Json
             $delBytes = [System.Text.Encoding]::UTF8.GetBytes($delJson)
             $response.ContentType = "application/json; charset=utf-8"
             $response.ContentLength64 = $delBytes.Length
             $response.StatusCode = 200
             $response.OutputStream.Write($delBytes, 0, $delBytes.Length)
+            $response.Close()
+            continue
+        }
+
+        # Handle Logo Settings API Endpoint (Writes directly to website_images/settings.json)
+        if ($request.HttpMethod -eq "POST" -and ($urlPath -eq "/api/settings" -or ($urlPath -eq "/upload.php" -and $request.QueryString["action"] -eq "save_settings"))) {
+            $reader = New-Object System.IO.StreamReader($request.InputStream, $request.ContentEncoding)
+            $body = $reader.ReadToEnd()
+            $reader.Close()
+
+            $resObj = @{ success = $false; message = "Invalid settings payload" }
+            try {
+                $settingsPath = Join-Path $imageDir "settings.json"
+                [System.IO.File]::WriteAllText($settingsPath, $body, [System.Text.Encoding]::UTF8)
+                $resObj = @{ success = $true; message = "Settings saved to website_images/settings.json" }
+            } catch {
+                $resObj = @{ success = $false; message = $_.Exception.Message }
+            }
+
+            $sJson = $resObj | ConvertTo-Json
+            $sBytes = [System.Text.Encoding]::UTF8.GetBytes($sJson)
+            $response.ContentType = "application/json; charset=utf-8"
+            $response.ContentLength64 = $sBytes.Length
+            $response.StatusCode = 200
+            $response.OutputStream.Write($sBytes, 0, $sBytes.Length)
             $response.Close()
             continue
         }
@@ -140,6 +194,7 @@ while ($listener.IsListening) {
 
                     $bytes = [System.Convert]::FromBase64String($dataStr)
                     [System.IO.File]::WriteAllBytes($targetPath, $bytes)
+Update-ImageManifest $imageDir
 
                     $resObj = @{
                         success  = $true
