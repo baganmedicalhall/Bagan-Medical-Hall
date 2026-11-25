@@ -454,73 +454,172 @@ const App = {
    * full resolution and transparent alpha channel, and stores strictly
    * into the project's website_images/ directory and persistent IndexedDB.
    * ------------------------------------------------------------- */
+  getMediaAdminToken() {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('bmh_media_admin_session') || 'null');
+      if (saved && saved.token && Number(saved.expiresAt) > Date.now() + 30000) {
+        return saved.token;
+      }
+      sessionStorage.removeItem('bmh_media_admin_session');
+    } catch (_) {}
+    return null;
+  },
+
+  clearMediaAdminSession() {
+    try {
+      sessionStorage.removeItem('bmh_media_admin_session');
+    } catch (_) {}
+  },
+
+  async ensureMediaAdminAuth() {
+    if (this.getMediaAdminToken()) return true;
+
+    return new Promise((resolve) => {
+      const old = document.getElementById('bmh-media-login');
+      if (old) old.remove();
+
+      document.body.insertAdjacentHTML('beforeend', `
+        <div id="bmh-media-login" style="position:fixed;inset:0;z-index:10050;background:#0009;display:grid;place-items:center;padding:20px;">
+          <form id="bmh-media-login-form" style="background:white;color:#1e293b;padding:25px;border-radius:12px;width:100%;max-width:380px;box-sizing:border-box;">
+            <h2 style="margin-top:0">Media Administrator Login</h2>
+            <label>Username</label>
+            <input name="username" value="admin" autocomplete="username" required style="display:block;width:100%;box-sizing:border-box;padding:11px;margin:7px 0 15px;">
+            <label>Password</label>
+            <input name="password" type="password" autocomplete="current-password" required style="display:block;width:100%;box-sizing:border-box;padding:11px;margin:7px 0 12px;">
+            <p id="bmh-media-login-error" style="color:#dc2626;font-size:13px;"></p>
+            <div style="display:flex;justify-content:flex-end;gap:10px;">
+              <button type="button" id="bmh-media-login-cancel">Cancel</button>
+              <button type="submit" id="bmh-media-login-submit">Sign in</button>
+            </div>
+          </form>
+        </div>`);
+
+      const modal = document.getElementById('bmh-media-login');
+      const form = document.getElementById('bmh-media-login-form');
+      const error = document.getElementById('bmh-media-login-error');
+      const submit = document.getElementById('bmh-media-login-submit');
+      let finished = false;
+
+      const finish = (ok) => {
+        if (finished) return;
+        finished = true;
+        form.elements.password.value = '';
+        modal.remove();
+        resolve(ok);
+      };
+
+      document.getElementById('bmh-media-login-cancel')
+        .addEventListener('click', () => finish(false));
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        submit.disabled = true;
+        submit.textContent = 'Signing in…';
+        error.textContent = '';
+
+        try {
+          const response = await fetch('/api/admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+              username: form.elements.username.value.trim(),
+              password: form.elements.password.value
+            })
+          });
+
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || data.status !== 'ok' || !data.token) {
+            throw new Error(data.message || 'Login failed. Check your credentials.');
+          }
+
+          const seconds = Number(data.expiresIn) || 28800;
+          sessionStorage.setItem('bmh_media_admin_session', JSON.stringify({
+            token: data.token,
+            expiresAt: Date.now() + seconds * 1000
+          }));
+          finish(true);
+        } catch (err) {
+          error.textContent = err.message || 'Unable to sign in.';
+          form.elements.password.value = '';
+          submit.disabled = false;
+          submit.textContent = 'Sign in';
+        }
+      });
+
+      form.elements.username.focus();
+    });
+  },
+
+  async mediaAdminFetch(url, options = {}) {
+    const token = this.getMediaAdminToken();
+    if (!token) throw new Error('Media administrator login is required.');
+
+    const headers = new Headers(options.headers || {});
+    headers.set('Authorization', 'Bearer ' + token);
+
+    const response = await fetch(url, {
+      ...options,
+      headers,
+      credentials: 'same-origin'
+    });
+
+    if (response.status === 401) {
+      this.clearMediaAdminSession();
+      throw new Error('Media administrator session expired. Please sign in again.');
+    }
+    return response;
+  },
+
   async uploadImageFile(file, customFilename = null) {
     if (!file) throw new Error('No file provided for upload.');
 
-    // Validate image format - accept any image format
-    const isImage = (file.type && file.type.startsWith('image/')) || 
-                    file.name.match(/\.(jpg|jpeg|png|svg|gif|webp|ico|bmp|tiff?|avif)$/i);
+    const isImage = ['image/jpeg', 'image/png', 'image/webp'].includes(file.type) ||
+      /\.(jpg|jpeg|png|webp)$/i.test(file.name || '');
+
     if (!isImage) {
-      throw new Error('Invalid file type. Please upload an image file (PNG, JPG, SVG, WEBP, GIF, BMP, etc.).');
+      throw new Error('Please select a valid image file.');
     }
 
-    // Clean base name and enforce .webp extension
-    const rawName = (customFilename || file.name || ('image_' + Date.now()));
-    let baseName = rawName.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_\.-]/g, '_');
-    if (!baseName || baseName.trim() === '') {
-      baseName = 'image_' + Date.now();
+    if (!this.getMediaAdminToken() && !(await this.ensureMediaAdminAuth())) {
+      throw new Error('Media administrator login is required.');
     }
-    const webpFilename = `${baseName}.webp`;
 
-    // 1. Read source image as Base64 Data URL
     const initialDataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
-      reader.onerror = (err) => reject(err);
+      reader.onerror = () => reject(new Error('Could not read the selected image.'));
       reader.readAsDataURL(file);
     });
 
-    // 2. Automatically Convert to High-Fidelity WebP Format
-    // Preserves original resolution, crisp details, and transparent alpha channel
-    let webpDataUrl = await new Promise((resolve) => {
+    // Convert supported browser images to WebP before sending to the API.
+    const convertedDataUrl = await new Promise(resolve => {
       const img = new Image();
-      img.crossOrigin = 'anonymous';
       img.onload = () => {
         try {
-          let width = img.naturalWidth || img.width || 800;
-          let height = img.naturalHeight || img.height || 600;
+          let width = img.naturalWidth || img.width;
+          let height = img.naturalHeight || img.height;
+          if (!width || !height) return resolve(initialDataUrl);
 
-          // For extreme ultra-high resolutions (> 4096px), clamp slightly to avoid browser canvas crash
-          // while preserving 4K Ultra-HD lossless visual fidelity
           const maxDim = 4096;
           if (width > maxDim || height > maxDim) {
-            if (width > height) {
-              height = Math.round((height * maxDim) / width);
-              width = maxDim;
-            } else {
-              width = Math.round((width * maxDim) / height);
-              height = maxDim;
-            }
+            const scale = maxDim / Math.max(width, height);
+            width = Math.round(width * scale);
+            height = Math.round(height * scale);
           }
 
           const canvas = document.createElement('canvas');
           canvas.width = width;
           canvas.height = height;
           const ctx = canvas.getContext('2d', { alpha: true });
+          if (!ctx) return resolve(initialDataUrl);
 
-          // Clear with full transparency
           ctx.clearRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
 
-          // Convert to WebP format at 0.96 quality (high visual fidelity, zero perceptible degradation)
-          const converted = canvas.toDataURL('image/webp', 0.96);
-          if (converted && converted.startsWith('data:image/webp')) {
-            resolve(converted);
-          } else {
-            // Fallback for rare browsers lacking webp canvas export
-            resolve(canvas.toDataURL('image/png', 1.0));
-          }
-        } catch (e) {
+          const output = canvas.toDataURL('image/webp', 0.96);
+          resolve(output.startsWith('data:image/webp') ? output : initialDataUrl);
+        } catch (_) {
           resolve(initialDataUrl);
         }
       };
@@ -528,68 +627,59 @@ const App = {
       img.src = initialDataUrl;
     });
 
-    // 3. Save physical file into website_images/ on disk
-    const targetPath = 'website_images/' + webpFilename;
-    let savedOnServer = false;
+    const blob = await fetch(convertedDataUrl).then(response => response.blob());
+    const allowedTypes = ['image/webp', 'image/jpeg', 'image/png'];
 
-    const endpoints = [
-      '/api/admin/media/upload',
-      '/api/media/upload',
-      '/api/upload',
-      'upload.php',
-      'http://localhost:8080/api/admin/media/upload',
-      'http://localhost:8080/api/media/upload',
-      'http://localhost:8080/api/upload',
-      'http://localhost:8080/upload.php'
-    ];
-
-    for (const ep of endpoints) {
-      try {
-        const res = await fetch(ep, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename: webpFilename, data: webpDataUrl })
-        });
-        if (res.ok) {
-          const json = await res.json();
-          if (json && (json.success || json.status === 'ok')) {
-            savedOnServer = true;
-            break;
-          }
-        }
-      } catch (_) {}
+    if (!allowedTypes.includes(blob.type)) {
+      throw new Error('This image could not be converted to JPEG, PNG, or WebP.');
+    }
+    if (blob.size > 5 * 1024 * 1024) {
+      throw new Error('The converted image exceeds the server limit of 5 MB.');
     }
 
-    // Direct folder handle write fallback if folder selected
-    if (window.__mediaDirectoryHandle) {
-      try {
-        const fileHandle = await window.__mediaDirectoryHandle.getFileHandle(webpFilename, { create: true });
-        const writable = await fileHandle.createWritable();
-        const bRes = await fetch(webpDataUrl);
-        const bBlob = await bRes.blob();
-        await writable.write(bBlob);
-        await writable.close();
-        savedOnServer = true;
-      } catch (err) {
-        console.warn('Direct directory write:', err);
-      }
+    const extension = blob.type === 'image/png' ? '.png' :
+      blob.type === 'image/jpeg' ? '.jpg' : '.webp';
+
+    const rawName = customFilename || file.name || ('image_' + Date.now());
+    const baseName = rawName.replace(/\.[^/.]+$/, '')
+      .replace(/[^a-zA-Z0-9_-]/g, '_') || ('image_' + Date.now());
+    const uploadFilename = baseName + extension;
+
+    const formData = new FormData();
+    formData.append('images', blob, uploadFilename);
+
+    const response = await this.mediaAdminFetch('/api/admin/media/upload', {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.status !== 'ok') {
+      throw new Error(data.message || 'The server rejected the image upload.');
     }
 
-    // 4. Construct Media Item Metadata
+    const uploaded = Array.isArray(data.media) ? data.media[0] : data.media;
+    if (!uploaded || !uploaded.id || !uploaded.filename) {
+      throw new Error('The server response did not include the uploaded media record.');
+    }
+
     const resultItem = {
-      id: 'med_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+      id: uploaded.id,
       success: true,
-      path: targetPath,
-      dataUrl: webpDataUrl,
-      filename: webpFilename,
-      size: Math.round(webpDataUrl.length * 0.75),
-      uploadedAt: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
-      title: webpFilename,
-      format: 'webp',
-      savedOnServer
+      path: uploaded.url || uploaded.filePath ||
+        ('/api/uploads/media/' + encodeURIComponent(uploaded.filename)),
+      dataUrl: convertedDataUrl,
+      filename: uploaded.filename,
+      size: uploaded.fileSize || blob.size,
+      uploadedAt: uploaded.createdAt || new Date().toISOString(),
+      title: uploaded.originalFilename || uploaded.filename,
+      format: uploaded.mimeType || blob.type,
+      savedOnServer: true,
+      folderId: uploaded.folderId || null,
+      folderName: uploaded.folderName || '',
+      folderSlug: uploaded.folderSlug || ''
     };
 
-    // 5. Register into Media Center & persist in IndexedDB
     pharmacyDB.addMediaItem(resultItem);
     if (typeof BaganMediaStore !== 'undefined' && BaganMediaStore.saveMedia) {
       await BaganMediaStore.saveMedia(resultItem);
@@ -599,66 +689,35 @@ const App = {
   },
 
   /* -------------------------------------------------------------
-   * DELETE MEDIA FILE (Synchronously removes from disk & memory)
-   * Removes from website_images/ folder on server and IndexedDB.
+   * DELETE MEDIA FILE THROUGH AUTHENTICATED MEDIA API
    * ------------------------------------------------------------- */
   async deleteMediaFile(filename, id = null) {
-    if (!filename) return false;
-
-    // 1. Remove from database and IndexedDB
-    pharmacyDB.deleteMediaItem(id || filename);
-    if (typeof BaganMediaStore !== 'undefined' && BaganMediaStore.deleteMedia) {
-      await BaganMediaStore.deleteMedia(filename);
-    }
-
-    // 2. Direct folder handle delete if active
-    if (window.__mediaDirectoryHandle) {
-      try {
-        await window.__mediaDirectoryHandle.removeEntry(filename);
-      } catch (_) {}
-    }
-
-    // 3. Remove physical file from website_images/ directory on server
-    const endpoints = [
-      `/api/admin/media/${encodeURIComponent(filename)}`,
-      `/api/media/${encodeURIComponent(filename)}`,
-      `/api/media?filename=${encodeURIComponent(filename)}`,
-      `upload.php?action=delete&filename=${encodeURIComponent(filename)}`,
-      `http://localhost:8080/api/admin/media/${encodeURIComponent(filename)}`,
-      `http://localhost:8080/api/media/${encodeURIComponent(filename)}`,
-      `http://localhost:8080/api/media?filename=${encodeURIComponent(filename)}`,
-      `http://localhost:8080/upload.php?action=delete&filename=${encodeURIComponent(filename)}`
-    ];
-
-    for (const ep of endpoints) {
-      try {
-        const res = await fetch(ep, { method: 'DELETE' });
-        if (res.ok) return true;
-      } catch (_) {}
-    }
-    return true;
+    throw new Error(
+      'Permanent media deletion is temporarily disabled to protect images that may still be in use. Your media has not been changed.'
+    );
   },
 
   /* -------------------------------------------------------------
-   * SERVER HEALTH & STATUS CHECK
+   * SERVER HEALTH CHECK
    * ------------------------------------------------------------- */
   async checkServerStatus() {
-    const urls = ['http://localhost:8080/api/status', '/api/status'];
-    for (const u of urls) {
-      try {
-        const res = await fetch(u, { method: 'GET', mode: 'cors' });
-        if (res.ok) {
-          const d = await res.json();
-          return { online: true, port: 8080, ...d };
-        }
-      } catch (_) {}
+    try {
+      const response = await fetch('/api/health', {
+        method: 'GET',
+        credentials: 'same-origin'
+      });
+      const data = await response.json().catch(() => ({}));
+
+      return {
+        online: response.ok && data.status === 'ok',
+        database: data.database || 'unknown',
+        status: data.status || 'error'
+      };
+    } catch (error) {
+      return { online: false, database: 'unknown', error: error.message };
     }
-    return { online: false };
   },
 
-  /* -------------------------------------------------------------
-   * FILE SYSTEM DIRECTORY PICKER FALLBACK
-   * ------------------------------------------------------------- */
   async connectLocalImageDirectory() {
     if ('showDirectoryPicker' in window) {
       try {
@@ -687,86 +746,98 @@ const App = {
   async syncMediaLibraryFromServer() {
     let syncedAny = false;
     let fileCount = 0;
+    let authRequired = !this.getMediaAdminToken();
 
-    // 1. Fetch static images.json manifest directly from website_images/ directory
-    const manifestPaths = [
-      '/api/admin/media',
-      '/api/media',
-      'website_images/images.json',
-      'website_images/manifest.json',
-      'upload.php',
-      'http://localhost:8080/api/admin/media',
-      'http://localhost:8080/api/media',
-      'http://localhost:8080/upload.php'
-    ];
+    // Preserve existing static logo settings.
+    try {
+      const settingsResponse = await fetch('website_images/settings.json');
+      if (settingsResponse.ok) {
+        const settings = await settingsResponse.json();
+        if (settings) {
+          // Static settings provide defaults only; never overwrite saved logo choices.
+          const currentLogos = pharmacyDB.data.globalSettings || {};
+          const logoDefaults = {};
 
-    for (const ep of manifestPaths) {
-      try {
-        const res = await fetch(ep, { method: 'GET' });
-        if (res.ok) {
-          const data = await res.json();
-          const rawItems = Array.isArray(data.media) ? data.media : (Array.isArray(data.files) ? data.files : []);
-          if (data && (data.success || data.status === 'ok') && rawItems.length > 0) {
-            rawItems.forEach(f => {
-              const fname = f.filename || f.name;
-              if (!fname || fname === 'bagan-medical-hall-logo.png') return;
-              if (pharmacyDB.data && pharmacyDB.data.deletedMedia && pharmacyDB.data.deletedMedia.includes(fname)) return;
-              pharmacyDB.addMediaItem({
-                id: f.id || ('med_' + fname.replace(/[^a-zA-Z0-9]/g, '_')),
-                filename: fname,
-                path: f.filePath || f.path || f.url || ('website_images/' + fname),
-                size: f.fileSize || f.size || 0,
-                format: f.mimeType === 'image/webp' || fname.endsWith('.webp') ? 'webp' : (f.format || 'image'),
-                uploadedAt: f.createdAt || f.lastModified || 'Preloaded'
-              });
-            });
-            syncedAny = true;
-            fileCount = rawItems.length;
-            break;
+          if (!currentLogos.logoColored && settings.logoColored) {
+            logoDefaults.logoColored = settings.logoColored;
+          }
+          if (!currentLogos.logoWhite && settings.logoWhite) {
+            logoDefaults.logoWhite = settings.logoWhite;
+          }
+          if (!currentLogos.logoImage && settings.logoColored) {
+            logoDefaults.logoImage = settings.logoColored;
+          }
+          if (!currentLogos.fallbackLogoImage && settings.fallbackLogoImage) {
+            logoDefaults.fallbackLogoImage = settings.fallbackLogoImage;
+          }
+
+          if (Object.keys(logoDefaults).length) {
+            pharmacyDB.updateGlobalSettings(logoDefaults);
           }
         }
-      } catch (_) {}
+      }
+    } catch (error) {
+      console.warn('Could not load website logo settings:', error);
     }
 
-    // 2. Fetch static settings.json from website_images/ directory to restore active logos universally
-    try {
-      const sRes = await fetch('website_images/settings.json');
-      if (sRes.ok) {
-        const sData = await sRes.json();
-        if (sData && sData.logoColored) {
-          pharmacyDB.updateGlobalSettings({
-            logoColored: sData.logoColored,
-            logoWhite: sData.logoWhite || sData.logoColored,
-            logoImage: sData.logoColored,
-            fallbackLogoImage: sData.fallbackLogoImage || 'website_images/default-logo-fallback.svg'
-          });
+    // Private media is fetched only after administrator login.
+    if (!authRequired) {
+      try {
+        const response = await this.mediaAdminFetch('/api/admin/media');
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || data.status !== 'ok' || !Array.isArray(data.media)) {
+          throw new Error(data.message || 'Unable to retrieve server media.');
         }
+
+        const existing = pharmacyDB.data.mediaLibrary || [];
+        const serverFilenames = new Set();
+
+        data.media.forEach(item => {
+          if (!item || !item.filename) return;
+
+          serverFilenames.add(item.filename);
+          const local = existing.find(entry => entry.filename === item.filename) || {};
+
+          pharmacyDB.addMediaItem({
+            ...local,
+            id: item.id,
+            filename: item.filename,
+            path: item.url || item.filePath || ('/api/uploads/media/' + encodeURIComponent(item.filename)),
+            dataUrl: local.dataUrl || '',
+            size: item.fileSize || 0,
+            title: item.originalFilename || item.filename,
+            format: item.mimeType || 'image',
+            uploadedAt: item.createdAt || 'Server media',
+            savedOnServer: true,
+            folderId: item.folderId || null,
+            folderName: item.folderName || '',
+            folderSlug: item.folderSlug || ''
+          });
+        });
+
+        pharmacyDB.data.mediaLibrary = (pharmacyDB.data.mediaLibrary || []).filter(item =>
+          !item.savedOnServer || serverFilenames.has(item.filename)
+        );
+        pharmacyDB.save();
+
+        syncedAny = true;
+        fileCount = data.media.length;
+      } catch (error) {
+        console.warn('Media API synchronization failed:', error);
+        authRequired = !this.getMediaAdminToken();
       }
-    } catch (_) {}
+    }
 
     this.refreshBrandLogos();
-    return { success: syncedAny, count: fileCount };
+    return { success: syncedAny, count: fileCount, authRequired };
   },
 
-  /* -------------------------------------------------------------
-   * SAVE ACTIVE LOGO CONFIG TO website_images/settings.json
-   * ------------------------------------------------------------- */
   async saveLogoSettingsToServer(settings) {
-    const endpoints = [
-      '/api/settings',
-      'upload.php?action=save_settings',
-      'http://localhost:8080/api/settings',
-      'http://localhost:8080/upload.php?action=save_settings'
-    ];
-    for (const ep of endpoints) {
-      try {
-        await fetch(ep, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(settings)
-        });
-      } catch (_) {}
-    }
+    // The current backend has no logo-settings endpoint.
+    // Logo assignments are still saved locally through pharmacyDB.
+    console.info('Logo settings are stored in this browser; server-side logo settings are not configured.');
+    return false;
   },
 
   /* -------------------------------------------------------------
@@ -813,12 +884,12 @@ const App = {
         if (found) src = found.dataUrl;
       }
       if (!src) {
-        src = (g.logoWhite && g.logoWhite !== 'website_images/default-logo-white.svg') ? g.logoWhite : 'website_images/bagan-medical-hall-logo.webp';
+        src = (g.logoWhite && !/bagan-medical-hall-logo\.(webp|png)$/i.test(g.logoWhite) && g.logoWhite !== 'website_images/default-logo-white.svg') ? g.logoWhite : 'website_images/default-logo-white.svg';
       }
       return {
         type: 'image',
         src: src,
-        fallbackSrc: 'website_images/bagan-medical-hall-logo.png',
+        fallbackSrc: 'website_images/default-logo-white.svg',
         fallbackText: fallbackText,
         fallbackType: fallbackType
       };
@@ -836,12 +907,12 @@ const App = {
         if (found) src = found.dataUrl;
       }
       if (!src) {
-        src = (g.logoColored && g.logoColored !== 'website_images/default-logo-colored.svg') ? g.logoColored : 'website_images/bagan-medical-hall-logo.webp';
+        src = (g.logoColored && !/bagan-medical-hall-logo\.(webp|png)$/i.test(g.logoColored) && g.logoColored !== 'website_images/default-logo-colored.svg') ? g.logoColored : 'website_images/default-logo-colored.svg';
       }
       return {
         type: 'image',
         src: src,
-        fallbackSrc: 'website_images/bagan-medical-hall-logo.png',
+        fallbackSrc: 'website_images/default-logo-colored.svg',
         fallbackText: fallbackText,
         fallbackType: fallbackType
       };
@@ -876,7 +947,7 @@ const App = {
               <span style="font-size: 1.3rem;">??</span>
               <div>
                 <h3 style="margin: 0; font-size: 1.05rem; font-weight: 700; color: #0f172a;">${title}</h3>
-                <div style="font-size: 0.73rem; color: #64748b;">Browse previously uploaded images in <code>website_images/</code> or upload a new one.</div>
+                <div style="font-size: 0.73rem; color: #64748b;">Browse previously uploaded images in the server media library or upload a new one.</div>
               </div>
             </div>
             <button class="btn-outline" style="border: none; font-size: 1.1rem; cursor: pointer;" id="${modalId}-close">&times;</button>
@@ -885,12 +956,12 @@ const App = {
           <!-- Quick Upload Bar in Modal -->
           <div style="padding: 0.75rem 1.25rem; background: #f8fafc; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
             <div style="font-size: 0.75rem; color: #475569;">
-              Showing <strong>${mediaItems.length}</strong> assets stored in <code>website_images/</code>
+              Showing <strong>${mediaItems.length}</strong> assets stored in the server media library
             </div>
             <div>
-              <input type="file" id="${modalId}-file-input" accept="image/*" style="display: none;">
+              <input type="file" id="${modalId}-file-input" accept="image/jpeg,image/png,image/webp" style="display: none;">
               <button class="btn btn-primary btn-sm" id="${modalId}-upload-btn" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;">
-                ${getIcon('upload')} Upload New to website_images/
+                ${getIcon('upload')} Upload New to Server Media
               </button>
             </div>
           </div>
@@ -901,7 +972,7 @@ const App = {
               <div style="text-align: center; padding: 2.5rem 1rem; color: #64748b;">
                 <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">???</div>
                 <div style="font-weight: 600;">No images uploaded yet</div>
-                <div style="font-size: 0.75rem; margin-top: 4px;">Click the upload button above to add images to website_images/</div>
+                <div style="font-size: 0.75rem; margin-top: 4px;">Click the upload button above to add images to the server media library</div>
               </div>
             ` : `
               <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.85rem;">
@@ -948,7 +1019,7 @@ const App = {
       fileInput.addEventListener('change', async (e) => {
         if (e.target.files && e.target.files[0]) {
           try {
-            App.showToast('Uploading to website_images/...', 'info');
+            App.showToast('Uploading image to server...', 'info');
             const res = await App.uploadImageFile(e.target.files[0]);
             closeModal();
             if (typeof onSelect === 'function') {

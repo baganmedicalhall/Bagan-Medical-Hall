@@ -462,42 +462,14 @@ export async function updateMedia(req, res) {
  * Delete media file from HimalayanHost filesystem and PostgreSQL metadata
  */
 export async function deleteMedia(req, res) {
-  try {
-    const { id } = req.params;
-    const { force = false } = req.query;
-
-    const mediaRes = await dbQuery('SELECT * FROM media_files WHERE id = $1 LIMIT 1', [id]);
-    if (!mediaRes.rows || mediaRes.rows.length === 0) {
-      return res.status(404).json({ status: 'error', message: 'Media record not found.' });
-    }
-
-    const media = mediaRes.rows[0];
-
-    // Host applications may add their own optional reference checks before deletion.
-
-    // Delete physical file from filesystem using fs.promises.access and fs.promises.unlink
-    if (media.file_path) {
-      try {
-        await fs.promises.access(media.file_path, fs.constants.F_OK);
-        await fs.promises.unlink(media.file_path);
-      } catch (unlinkErr) {
-        if (unlinkErr.code !== 'ENOENT') {
-          console.warn('[MEDIA] Filesystem unlink warning:', unlinkErr.message);
-        }
-      }
-    }
-
-    // Delete record from PostgreSQL
-    await dbQuery('DELETE FROM media_files WHERE id = $1', [id]);
-
-    return res.json({
-      status: 'ok',
-      message: 'Media file deleted permanently from HimalayanHost.',
-    });
-  } catch (err) {
-    console.error('[MEDIA] deleteMedia error:', err);
-    return res.status(500).json({ status: 'error', message: err.message || 'Failed to delete media.' });
-  }
+  // SAFETY LOCK: media references are not centrally tracked yet.
+  // Browser-local logo assignments and other frontend references cannot
+  // be verified reliably by this backend. Refuse permanent deletion.
+  return res.status(409).json({
+    status: 'protected',
+    code: 'MEDIA_DELETION_DISABLED',
+    message: 'Permanent media deletion is temporarily disabled to protect images that may still be in use. No file or database record was changed.'
+  });
 }
 
 /**

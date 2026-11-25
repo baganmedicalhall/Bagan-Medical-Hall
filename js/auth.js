@@ -597,7 +597,7 @@ const Auth = {
               <span style="font-size: 0.7rem; font-weight: 700; background: #fef3c7; color: #b45309; padding: 2px 6px; border-radius: 4px;">GALLERY</span>
             </div>
             <div style="font-weight: 700; font-size: 0.92rem; color: #0f172a; margin-top: 0.5rem;">Media Center</div>
-            <div style="font-size: 0.73rem; color: #64748b; margin-top: 2px;">Browse & manage uploaded assets in <code>website_images/</code></div>
+            <div style="font-size: 0.73rem; color: #64748b; margin-top: 2px;">Browse and manage images in the server media library</div>
           </div>
 
           <!-- Card 7: Database Management -->
@@ -769,8 +769,8 @@ const Auth = {
                 <div style="font-weight: 700; font-size: 0.92rem; color: #0f172a; display: flex; align-items: center; gap: 6px;">
                   <span>🖼️</span> Dual Logo System (Contextual Background Fit)
                 </div>
-                <span class="logo-folder-badge" title="All uploaded assets are stored strictly in website_images/">
-                  📁 website_images/
+                <span class="logo-folder-badge" title="Uploaded assets are stored in the server media library">
+                  📁 Server Media
                 </span>
               </div>
 
@@ -784,7 +784,7 @@ const Auth = {
                   <span style="font-size: 0.68rem; background: #f1f5f9; color: #475569; padding: 2px 6px; border-radius: 4px; font-weight: 600;">Light Context</span>
                 </div>
 
-                <input type="file" id="glob-colored-file" accept="image/*" style="display: none;">
+                <input type="file" id="glob-colored-file" accept="image/jpeg,image/png,image/webp" style="display: none;">
                 <input type="hidden" id="glob-colored-path" value="${logoColoredPath}">
                 <input type="hidden" id="glob-colored-data" value="${logoColoredData}">
 
@@ -822,7 +822,7 @@ const Auth = {
                   <span style="font-size: 0.68rem; background: #0f172a; color: white; padding: 2px 6px; border-radius: 4px; font-weight: 600;">Dark Context</span>
                 </div>
 
-                <input type="file" id="glob-white-file" accept="image/*" style="display: none;">
+                <input type="file" id="glob-white-file" accept="image/jpeg,image/png,image/webp" style="display: none;">
                 <input type="hidden" id="glob-white-path" value="${logoWhitePath}">
                 <input type="hidden" id="glob-white-data" value="${logoWhiteData}">
 
@@ -874,7 +874,7 @@ const Auth = {
 
               <!-- Option A: Fallback Image -->
               <div id="wrap-fallback-image" style="background: white; border: 1px solid #cbd5e1; border-radius: 8px; padding: 0.85rem; display: ${fallbackType === 'image' ? 'block' : 'none'};">
-                <input type="file" id="glob-fallback-file" accept="image/*" style="display: none;">
+                <input type="file" id="glob-fallback-file" accept="image/jpeg,image/png,image/webp" style="display: none;">
                 <input type="hidden" id="glob-fallback-path" value="${fallbackLogoPath}">
                 <input type="hidden" id="glob-fallback-data" value="${fallbackLogoData}">
 
@@ -1242,14 +1242,14 @@ const Auth = {
               <span>📸</span> Media Center & Asset Management
             </h2>
             <p style="font-size: 0.8rem; color: #64748b; margin: 0;">
-              All images and logos are permanently stored in the project's <code>website_images/</code> directory (with <code>images.json</code> and <code>settings.json</code>) so they persist permanently and fetch across every new browser and device without losing quality.
+              Media files are stored on the server through the authenticated Media API. Uploaded images are converted to WebP where supported; logo settings continue to use the existing website settings.
             </p>
           </div>
           <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-            <button type="button" class="btn btn-outline" id="btn-sync-media-folder" style="font-size: 0.82rem;" title="Scan website_images/ directory on disk and synchronize all images">
-              🔄 Sync from website_images/
+            <button type="button" class="btn btn-outline" id="btn-sync-media-folder" style="font-size: 0.82rem;" title="Refresh the authenticated server media library">
+              🔄 Refresh Server Media
             </button>
-            <input type="file" id="media-center-file-input" accept="image/*" multiple style="display: none;">
+            <input type="file" id="media-center-file-input" accept="image/jpeg,image/png,image/webp" multiple style="display: none;">
             <button class="btn btn-primary" id="btn-media-center-upload" style="font-size: 0.85rem;">
               ${getIcon('upload')} Upload New (Auto-Convert to WebP)
             </button>
@@ -1261,15 +1261,15 @@ const Auth = {
           <div style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem;">
             <span id="media-status-dot" style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.2);"></span>
             <span id="media-status-text" style="color: #166534; font-weight: 600;">
-              🟢 Real-Time File Manager Sync Active: All uploads & deletions sync to <code>website_images/</code> in WebP format
+              Authenticated server media API is used for uploads, listing and deletions
             </span>
           </div>
           <div style="display: flex; gap: 0.4rem; align-items: center;">
-            <button type="button" class="btn btn-outline btn-sm" id="btn-check-server-status" style="font-size: 0.73rem; padding: 4px 10px; background: white;" title="Test live server connectivity">
+            <button type="button" class="btn btn-outline btn-sm" id="btn-check-server-status" style="font-size: 0.73rem; padding: 4px 10px; background: white;" title="Check API and database connectivity">
               ⚡ Test Server
             </button>
-            <button type="button" class="btn btn-outline btn-sm" id="btn-pick-media-folder" style="font-size: 0.73rem; padding: 4px 10px; background: white;" title="Connect website_images folder for direct disk writes in browser">
-              📁 Local Folder Handle
+            <button type="button" class="btn btn-outline btn-sm" id="btn-pick-media-folder" style="font-size: 0.73rem; padding: 4px 10px; background: white;" title="Optional local browser folder permission; this does not upload files to the server">
+              📁 Local Folder Access
             </button>
           </div>
         </div>
@@ -1278,7 +1278,7 @@ const Auth = {
         <div id="media-center-dropzone" style="border: 2px dashed #94a3b8; border-radius: 10px; padding: 1.25rem; text-align: center; background: #f8fafc; margin-bottom: 1.25rem; cursor: pointer; transition: all 0.2s ease;">
           <div style="font-size: 1.8rem; margin-bottom: 0.25rem;">🖼️</div>
           <div style="font-weight: 700; font-size: 0.92rem; color: #1e293b;">Click to Browse or Drag & Drop Images Here</div>
-          <div style="font-size: 0.74rem; color: #64748b; margin-top: 4px;">Any image format (PNG, JPG, SVG, GIF, BMP). Automatically converted to high-fidelity WebP (.webp) and saved to website_images/</div>
+          <div style="font-size: 0.74rem; color: #64748b; margin-top: 4px;">Accepted formats: JPEG, PNG and WebP. Maximum 5 MB per image. The server stores uploaded media as WebP.</div>
         </div>
 
         <!-- Toolbar: Search & Count Filter -->
@@ -1286,7 +1286,7 @@ const Auth = {
           <div style="display: flex; align-items: center; gap: 8px;">
             <span style="font-size: 0.8rem; font-weight: 700; color: #334155;">Library Assets:</span>
             <span class="nav-badge" style="background: #e2e8f0; color: #1e293b; font-weight: 700;">${mediaItems.length} Files</span>
-            <span class="logo-folder-badge">📁 website_images/</span>
+            <span class="logo-folder-badge">📁 Server Media</span>
           </div>
           <div style="max-width: 280px; width: 100%;">
             <input type="text" id="media-center-search" class="form-control" placeholder="Search images by name..." style="padding: 0.35rem 0.65rem; font-size: 0.8rem;">
@@ -1299,7 +1299,7 @@ const Auth = {
             <div style="grid-column: 1 / -1; text-align: center; padding: 3rem 1rem; color: #64748b; background: white; border: 1px dashed #cbd5e1; border-radius: 10px;">
               <div style="font-size: 3rem; margin-bottom: 0.5rem;">🖼️</div>
               <div style="font-weight: 600; font-size: 1rem;">No Media Uploaded Yet</div>
-              <div style="font-size: 0.8rem; margin-top: 4px;">Click the upload button above to add assets to <code>website_images/</code>.</div>
+              <div style="font-size: 0.8rem; margin-top: 4px;">Use the upload button above to add images to the server media library.</div>
             </div>
           ` : mediaItems.map(item => {
             const isColLogo = (g.logoColored === item.path || (item.dataUrl && g.logoColoredData === item.dataUrl));
@@ -1352,11 +1352,9 @@ const Auth = {
                       📋 Copy Path
                     </button>
                   </div>
-                  ${(!item.id || !item.id.startsWith('med_default')) ? `
-                    <button type="button" class="btn btn-outline btn-sm btn-delete-media" data-id="${item.id}" data-filename="${item.filename}" style="font-size: 0.68rem; padding: 3px 4px; color: #e11d48; border-color: #fecdd3; justify-content: center; margin-top: 2px;">
-                      🗑️ Delete
-                    </button>
-                  ` : ''}
+                  <div class="media-delete-protected" role="note" style="font-size: 0.68rem; padding: 6px 4px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 5px; text-align: center;">
+                    🔒 Deletion protected
+                  </div>
                 </div>
               </div>
             `;
@@ -1899,8 +1897,19 @@ const Auth = {
   bindHubSectionEvents() {
     // 4 Architecture Tile Switching
     document.querySelectorAll('.dev-hub-tile').forEach(tile => {
-      tile.addEventListener('click', () => {
+      tile.addEventListener('click', async () => {
         const section = tile.getAttribute('data-hub-section');
+
+        if (section === 'media') {
+          const authenticated = await App.ensureMediaAdminAuth();
+          if (!authenticated) return;
+
+          const result = await App.syncMediaLibraryFromServer();
+          if (!result.success) {
+            App.showToast('Could not refresh server media. Check the connection and try again.', 'warning');
+          }
+        }
+
         this.renderDeveloperHub(section);
       });
     });
@@ -2084,7 +2093,7 @@ const Auth = {
       coloredFile.addEventListener('change', async (e) => {
         if (e.target.files && e.target.files[0]) {
           try {
-            App.showToast('Uploading Coloured Logo to website_images/...', 'info');
+            App.showToast('Uploading coloured logo to server...', 'info');
             const res = await App.uploadImageFile(e.target.files[0]);
             updateColoredLogoDisplay(res.path, res.dataUrl);
             App.showToast(`Coloured Logo saved to ${res.path}!`, 'success');
@@ -2147,7 +2156,7 @@ const Auth = {
       whiteFile.addEventListener('change', async (e) => {
         if (e.target.files && e.target.files[0]) {
           try {
-            App.showToast('Uploading White Logo to website_images/...', 'info');
+            App.showToast('Uploading white logo to server...', 'info');
             const res = await App.uploadImageFile(e.target.files[0]);
             updateWhiteLogoDisplay(res.path, res.dataUrl);
             App.showToast(`White Logo saved to ${res.path}!`, 'success');
@@ -2231,7 +2240,7 @@ const Auth = {
       fallbackFile.addEventListener('change', async (e) => {
         if (e.target.files && e.target.files[0]) {
           try {
-            App.showToast('Uploading Fallback Logo to website_images/...', 'info');
+            App.showToast('Uploading fallback logo to server...', 'info');
             const res = await App.uploadImageFile(e.target.files[0]);
             updateFallbackImage(res.path, res.dataUrl);
             App.showToast(`Fallback Logo stored in ${res.path}!`, 'success');
@@ -2478,14 +2487,14 @@ const Auth = {
     const handleUploadFiles = async (filesList) => {
       if (!filesList || filesList.length === 0) return;
       try {
-        App.showToast(`Uploading ${filesList.length} asset(s) to website_images/...`, 'info');
+        App.showToast(`Uploading ${filesList.length} image(s) to the server...`, 'info');
         for (let i = 0; i < filesList.length; i++) {
           await App.uploadImageFile(filesList[i]);
         }
-        App.showToast(`Successfully uploaded and persisted ${filesList.length} image(s)!`, 'success');
+        App.showToast(`Successfully uploaded ${filesList.length} image(s) to the server!`, 'success');
         this.renderDeveloperHub('media');
       } catch (err) {
-        alert(err.message);
+        App.showToast(err.message || 'Image upload failed.', 'error');
       } finally {
         if (mcFileInput) mcFileInput.value = '';
       }
@@ -2620,16 +2629,16 @@ const Auth = {
       });
     });
 
-    // Sync from website_images/ Folder
+    // Refresh authenticated server media library
     const mcSyncBtn = document.getElementById('btn-sync-media-folder');
     if (mcSyncBtn) {
       mcSyncBtn.addEventListener('click', async () => {
-        App.showToast('Scanning website_images/ folder on disk...', 'info');
+        App.showToast('Refreshing server media library...', 'info');
         const res = await App.syncMediaLibraryFromServer();
         if (res && res.success) {
-          App.showToast(`Successfully synced ${res.count} file(s) from website_images/!`, 'success');
+          App.showToast(`Refreshed ${res.count} server media file(s).`, 'success');
         } else {
-          App.showToast('Sync completed. Media library is up-to-date with website_images/', 'info');
+          App.showToast(res && res.authRequired ? 'Administrator login is required to view server media.' : 'Could not refresh server media. Check the API connection.', 'warning');
         }
         this.renderDeveloperHub('media');
       });
@@ -2639,18 +2648,18 @@ const Auth = {
     const mcCheckServerBtn = document.getElementById('btn-check-server-status');
     if (mcCheckServerBtn) {
       mcCheckServerBtn.addEventListener('click', async () => {
-        App.showToast('Checking server status on http://localhost:8080/...', 'info');
+        App.showToast('Checking API and database status...', 'info');
         const stat = await App.checkServerStatus();
         const dot = document.getElementById('media-status-dot');
         const text = document.getElementById('media-status-text');
         if (stat && stat.online) {
           if (dot) dot.style.background = '#16a34a';
-          if (text) text.innerHTML = '🟢 Real-Time File Manager Sync Active: Connected to <code>website_images/</code> (Server running on http://localhost:8080)';
-          App.showToast('🟢 Server is ONLINE! Real-time File Manager writes and deletes are active.', 'success');
+          if (text) text.textContent = 'Connected to the Bagan Medical Hall API. Database: ' + stat.database + '.';
+          App.showToast('API is online and database is connected.', 'success');
         } else {
           if (dot) dot.style.background = '#f59e0b';
-          if (text) text.innerHTML = '🟡 Offline Mode: Double-click <code>start-app.bat</code> or <code>start-server.bat</code> in project folder for real-time File Manager sync';
-          App.showToast('🟡 Server offline. Run start-app.bat to enable automatic File Manager saving!', 'warning');
+          if (text) text.textContent = 'API is unavailable. Check the cPanel Node.js application and database connection.';
+          App.showToast('API is unavailable. Check the server application.', 'warning');
         }
       });
     }
@@ -2662,24 +2671,11 @@ const Auth = {
         const res = await App.connectLocalImageDirectory();
         if (res && res.success) {
           const text = document.getElementById('media-status-text');
-          if (text) text.innerHTML = `🟢 Direct Folder Connected: <code>${res.name}</code> (Browser writes directly to disk in File Manager)`;
-          App.showToast(`Connected directly to "${res.name}" folder! Real-time disk writes enabled.`, 'success');
+          if (text) text.textContent = `Local browser folder permission granted for ${res.name}. Server uploads still use the Media API.`;
+          App.showToast(`Local folder access granted for "${res.name}". This does not change server uploads.`, 'info');
         }
       });
     }
-
-    // Delete Media item (Removes from website_images/ folder on disk and memory)
-    document.querySelectorAll('.btn-delete-media').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const id = btn.getAttribute('data-id');
-        const fn = btn.getAttribute('data-filename');
-        if (confirm(`Are you sure you want to permanently delete "${fn}" from the website_images/ folder and Media Center?`)) {
-          await App.deleteMediaFile(fn, id);
-          App.showToast(`Permanently deleted "${fn}" from website_images/`, 'info');
-          this.renderDeveloperHub('media');
-        }
-      });
-    });
 
     // SECTION 4: Master Catalogs Events
     document.querySelectorAll('.catalog-subtab-btn').forEach(btn => {
