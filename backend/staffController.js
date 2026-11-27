@@ -92,8 +92,12 @@ export async function provisionStaff(req, res) {
     // 2. Check for duplicate username or email case-insensitively
     const duplicateCheck = await query(`
       SELECT id, username, email FROM app_users 
-      WHERE LOWER(username) = LOWER($1) 
-         OR (email IS NOT NULL AND $2 IS NOT NULL AND LOWER(email) = LOWER($2))
+      WHERE LOWER(username) = LOWER($1)
+         OR (
+             email IS NOT NULL
+             AND $2::text IS NOT NULL
+             AND LOWER(email) = LOWER($2::text)
+         )
       LIMIT 1
     `, [cleanUser, cleanEmail]);
 
