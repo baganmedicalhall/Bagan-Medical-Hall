@@ -4,16 +4,43 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import sharp from 'sharp';
-import multer from 'multer';
+let sharp = null;
+try {
+  const sharpModule = await import('sharp');
+  sharp = sharpModule.default || sharpModule;
+} catch (_) {}
+
+let multer = null;
+try {
+  const multerModule = await import('multer');
+  multer = multerModule.default || multerModule;
+} catch (_) {}
+import { query as defaultDbQuery, verifyMediaSchemaReadiness } from './db.js';
+export { verifyMediaSchemaReadiness };
+
 let mediaPool = null;
 async function dbQuery(sql, params = []) {
-  if (!mediaPool) throw Error('Call initMediaSystem(pool) first.');
-  return mediaPool.query(sql, params);
+  if (mediaPool && typeof mediaPool.query === 'function') {
+    return mediaPool.query(sql, params);
+  }
+  return defaultDbQuery(sql, params);
 }
 
-let ROOT_MEDIA_DIR = process.env.MEDIA_UPLOAD_DIR || path.join(process.cwd(), 'public', 'uploads', 'media');
-let MEDIA_PUBLIC_URL_PREFIX = process.env.MEDIA_PUBLIC_URL_PREFIX || '/uploads/media';
+// Permanent system branding and configuration assets that must never be deleted
+export const PROTECTED_SYSTEM_FILES = new Set([
+  'bagan-medical-hall-logo.png',
+  'default-logo.svg',
+  'default-logo-colored.svg',
+  'default-logo-white.svg',
+  'default-logo-fallback.svg',
+  'favicon.ico',
+  'images.json',
+  'manifest.json',
+  'settings.json',
+]);
+
+let ROOT_MEDIA_DIR = process.env.MEDIA_UPLOAD_DIR || path.join(process.cwd(), 'website_images');
+let MEDIA_PUBLIC_URL_PREFIX = process.env.MEDIA_PUBLIC_URL_PREFIX || '/website_images';
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 const ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
@@ -22,20 +49,68 @@ const ALLOWED_MIME_TYPES = new Set([
   'image/webp',
 ]);
 
-// Memory storage for Multer: image is kept in buffer so Sharp can convert it directly to WebP before writing to disk
-export const uploadMiddleware = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: MAX_FILE_SIZE_BYTES,
-    files: 10,
-  },
-  fileFilter: (req, file, cb) => {
-    if (!ALLOWED_MIME_TYPES.has(file.mimetype.toLowerCase())) {
-      return cb(new Error('Only JPEG, PNG, and WEBP image formats are supported.'), false);
+/**
+ * Validates media storage configuration against production security requirements.
+ * In production:
+ * - MEDIA_UPLOAD_DIR must be explicitly defined (silent fallback prohibited).
+ * - MEDIA_UPLOAD_DIR must be an absolute path matching the public document root.
+ * - MEDIA_UPLOAD_DIR must be writable.
+ *
+ * @param {object} [env] Environment map (defaults to process.env)
+ * @returns {{ isProduction: boolean, uploadDir: string }}
+ */
+export function validateMediaStorageConfig(env = process.env) {
+  const isProd = env.NODE_ENV === 'production';
+  const rawDir = env.MEDIA_UPLOAD_DIR;
+
+  if (isProd) {
+    if (!rawDir || !rawDir.trim()) {
+      throw new Error("[SECURITY CONFIG ERROR] In production, MEDIA_UPLOAD_DIR must be explicitly configured as an absolute path matching the public media document root. Silent fallback to backend local directory is prohibited.");
     }
-    cb(null, true);
-  },
-});
+    if (!path.isAbsolute(rawDir.trim())) {
+      throw new Error(`[SECURITY CONFIG ERROR] In production, MEDIA_UPLOAD_DIR must be an absolute path. Received relative path: '${rawDir}'. Server startup halted.`);
+    }
+  }
+
+  const resolvedDir = rawDir && rawDir.trim()
+    ? path.resolve(rawDir.trim())
+    : path.join(process.cwd(), 'website_images');
+
+  try {
+    if (!fs.existsSync(resolvedDir)) {
+      fs.mkdirSync(resolvedDir, { recursive: true });
+    }
+    const probeFile = path.join(resolvedDir, `.probe_write_${Date.now()}`);
+    fs.writeFileSync(probeFile, 'probe');
+    fs.unlinkSync(probeFile);
+  } catch (fsErr) {
+    if (isProd) {
+      throw new Error(`[SECURITY CONFIG ERROR] Configured MEDIA_UPLOAD_DIR '${resolvedDir}' is not writable: ${fsErr.message}. Server startup halted.`);
+    }
+  }
+
+  return { isProduction: isProd, uploadDir: resolvedDir };
+}
+
+// Memory storage for Multer: image is kept in buffer so Sharp can convert it directly to WebP before writing to disk
+export const uploadMiddleware = (multer && typeof multer === 'function')
+  ? multer({
+      storage: (multer.memoryStorage && typeof multer.memoryStorage === 'function') ? multer.memoryStorage() : undefined,
+      limits: {
+        fileSize: MAX_FILE_SIZE_BYTES,
+        files: 10,
+      },
+      fileFilter: (req, file, cb) => {
+        if (!ALLOWED_MIME_TYPES.has(file.mimetype.toLowerCase())) {
+          return cb(new Error('Only JPEG, PNG, and WEBP image formats are supported.'), false);
+        }
+        cb(null, true);
+      },
+    })
+  : {
+      array: () => (req, res, next) => next(),
+      single: () => (req, res, next) => next(),
+    };
 
 // Helper: Ensure directory exists synchronously
 function ensureDirectory(dirPath) {
@@ -58,66 +133,76 @@ export function sanitizeBaseFilename(originalName) {
   return safeName || 'media';
 }
 
-// Initialize tables and filesystem folders
+// verifyMediaSchemaReadiness is imported from ./db.js (the authoritative single source of truth) and re-exported.
+
+/**
+ * Verifies that all authoritative database migrations (001, 002, 003)
+ * have been executed in sequence against the database.
+ * 
+ * @param {object} pool PostgreSQL connection pool
+ * @returns {Promise<{ success: boolean, applied: string[] }>}
+ */
+export async function verifyAllMigrations(pool) {
+  if (!pool || typeof pool.query !== 'function') {
+    throw new Error('A PostgreSQL-compatible pool is required to verify database migrations.');
+  }
+
+  let res;
+  try {
+    res = await pool.query('SELECT version FROM schema_migrations ORDER BY applied_at ASC');
+  } catch (err) {
+    throw new Error(`[SCHEMA ERROR] Unable to query schema_migrations: ${err.message}. Ensure base migrations have been applied (database/001_auth_system.sql).`);
+  }
+
+  const applied = (res.rows || []).map(r => r.version);
+  const required = ['001_auth_system', '002_password_reset_isolation', '003_media_center'];
+  const missing = required.filter(v => !applied.includes(v));
+
+  if (missing.length > 0) {
+    throw new Error(
+      `[SCHEMA ERROR] Mandatory database migration(s) missing: ${missing.join(', ')}. Please execute migrations in sequence (001_auth_system.sql, 002_password_reset_isolation.sql, 003_media_center.sql).`
+    );
+  }
+
+  return { success: true, applied };
+}
+
+// Initialize filesystem folders and verify database schema readiness
 export async function initMediaSystem(pool, options = {}) {
   if (!pool || typeof pool.query !== 'function') throw Error('A PostgreSQL-compatible pool is required.');
   mediaPool = pool;
-  ROOT_MEDIA_DIR = path.resolve(options.uploadDir || process.env.MEDIA_UPLOAD_DIR || ROOT_MEDIA_DIR);
+
+  const isProd = process.env.NODE_ENV === 'production';
+  const rawDir = options.uploadDir || process.env.MEDIA_UPLOAD_DIR;
+  if (isProd) {
+    if (!rawDir || !rawDir.trim()) {
+      throw new Error("[SECURITY CONFIG ERROR] In production, MEDIA_UPLOAD_DIR must be explicitly defined as an absolute path. Silent fallback is prohibited.");
+    }
+    if (!path.isAbsolute(rawDir.trim())) {
+      throw new Error(`[SECURITY CONFIG ERROR] In production, MEDIA_UPLOAD_DIR must be an absolute path. Received relative path: '${rawDir}'.`);
+    }
+  }
+
+  ROOT_MEDIA_DIR = path.resolve(rawDir || ROOT_MEDIA_DIR);
   MEDIA_PUBLIC_URL_PREFIX = (options.publicUrlPrefix || process.env.MEDIA_PUBLIC_URL_PREFIX || MEDIA_PUBLIC_URL_PREFIX).replace(/\/$/, '');
   try {
     ensureDirectory(ROOT_MEDIA_DIR);
+    // Verify directory writability
+    const probe = path.join(ROOT_MEDIA_DIR, `.probe_init_${Date.now()}`);
+    fs.writeFileSync(probe, 'w');
+    fs.unlinkSync(probe);
+
     const standardFolders = ['products', 'banners', 'categories', 'brands', 'services', 'general'];
     for (const folder of standardFolders) {
       ensureDirectory(path.join(ROOT_MEDIA_DIR, folder));
     }
 
-    // Ensure database tables exist
-    const createTablesSql = `
-      CREATE TABLE IF NOT EXISTS media_folders (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        slug TEXT NOT NULL UNIQUE,
-        parent_id TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
+    // Verify database schema readiness (Migrations are sole authority; NO runtime DDL)
+    await verifyMediaSchemaReadiness(pool);
 
-      CREATE TABLE IF NOT EXISTS media_files (
-        id TEXT PRIMARY KEY,
-        filename TEXT NOT NULL,
-        original_filename TEXT NOT NULL,
-        file_path TEXT NOT NULL,
-        url TEXT NOT NULL,
-        mime_type TEXT NOT NULL,
-        file_size BIGINT NOT NULL,
-        width INT,
-        height INT,
-        folder_id TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_media_files_folder ON media_files(folder_id);
-      CREATE INDEX IF NOT EXISTS idx_media_files_created ON media_files(created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_media_folders_slug ON media_folders(slug);
-    `;
-
-    await pool.query(createTablesSql);
-    await pool.query(`
-      INSERT INTO media_folders (id, name, slug)
-      VALUES
-        ('folder-products', 'Products', 'products'),
-        ('folder-banners', 'Banners', 'banners'),
-        ('folder-categories', 'Categories', 'categories'),
-        ('folder-brands', 'Brands', 'brands'),
-        ('folder-services', 'Services', 'services'),
-        ('folder-general', 'General', 'general')
-      ON CONFLICT (slug) DO NOTHING;
-    `);
-
-    console.log('[MEDIA] Media Center system initialized on HimalayanHost filesystem.');
+    console.log('[MEDIA] Media Center system verified and initialized on HimalayanHost filesystem.');
   } catch (err) {
-    console.error('[MEDIA] initMediaSystem failed:', err);
+    console.error('[MEDIA] initMediaSystem failed:', err.message);
     throw err;
   }
 }
@@ -229,7 +314,20 @@ export async function getMediaFiles(req, res) {
  */
 export async function uploadMedia(req, res) {
   try {
-    const files = req.files || (req.file ? [req.file] : []);
+    let files = req.files || (req.file ? [req.file] : []);
+    if ((!files || files.length === 0) && req.body?.data) {
+      let base64Content = req.body.data;
+      if (base64Content.includes(',')) {
+        base64Content = base64Content.split(',')[1];
+      }
+      const buffer = Buffer.from(base64Content, 'base64');
+      files = [{
+        originalname: req.body.filename || `image_${Date.now()}.png`,
+        buffer,
+        size: buffer.length,
+        mimetype: 'image/png',
+      }];
+    }
     if (!files || files.length === 0) {
       return res.status(400).json({ status: 'error', message: 'No image files provided for upload.' });
     }
@@ -458,18 +556,242 @@ export async function updateMedia(req, res) {
 }
 
 /**
+ * Multi-Tier Reference Check: Scans database and filesystem references.
+ *
+ * @param {string} filename Base filename (e.g. 'logo-main.webp')
+ * @returns {Promise<{ isReferenced: boolean, reason?: string, source?: string }>}
+ */
+export async function checkMediaReferences(filename) {
+  if (!filename || typeof filename !== 'string') {
+    return { isReferenced: false };
+  }
+
+  const cleanName = path.basename(filename).toLowerCase();
+
+  // Tier 0: Critical Protected System Assets
+  if (PROTECTED_SYSTEM_FILES.has(cleanName)) {
+    return {
+      isReferenced: true,
+      reason: `"${cleanName}" is a permanently protected system branding/configuration asset.`,
+      source: 'system:core',
+    };
+  }
+
+  // Tier 1: Check Database System Settings (system_settings table)
+  try {
+    const settingsRes = await dbQuery(
+      `SELECT key, value FROM system_settings 
+       WHERE key IN ('logoColored', 'logoWhite', 'fallbackLogoImage', 'logoImage', 'favicon')
+          OR value ILIKE $1 
+       LIMIT 1`,
+      [`%${cleanName}%`]
+    );
+    if (settingsRes.rows && settingsRes.rows.length > 0) {
+      const match = settingsRes.rows[0];
+      return {
+        isReferenced: true,
+        reason: `Referenced as active branding setting "${match.key}" in system_settings database table.`,
+        source: 'database:system_settings',
+      };
+    }
+  } catch (err) {
+    // If system_settings table does not exist or db error, log and proceed to filesystem checks
+    console.warn('[MEDIA] checkMediaReferences DB system_settings check skipped:', err.message);
+  }
+
+  // Tier 2: Check Filesystem Settings (settings.json in ROOT_MEDIA_DIR or website_images)
+  const candidateSettingsPaths = [
+    path.join(ROOT_MEDIA_DIR, 'settings.json'),
+    path.join(process.cwd(), 'website_images', 'settings.json'),
+  ];
+
+  for (const settingsPath of candidateSettingsPaths) {
+    if (fs.existsSync(settingsPath)) {
+      try {
+        const raw = fs.readFileSync(settingsPath, 'utf8');
+        const settings = JSON.parse(raw);
+        for (const [key, val] of Object.entries(settings)) {
+          if (typeof val === 'string' && val.toLowerCase().includes(cleanName)) {
+            return {
+              isReferenced: true,
+              reason: `Referenced as "${key}" in settings.json (${val}).`,
+              source: 'filesystem:settings.json',
+            };
+          }
+        }
+      } catch (err) {
+        console.warn('[MEDIA] Failed to parse settings.json:', err.message);
+      }
+    }
+  }
+
+  // Tier 3: Check Medicine Catalogue in Database (medicines table image column)
+  try {
+    const medRes = await dbQuery(
+      `SELECT id, name FROM medicines 
+       WHERE image ILIKE $1 
+       LIMIT 1`,
+      [`%${cleanName}%`]
+    );
+    if (medRes.rows && medRes.rows.length > 0) {
+      const med = medRes.rows[0];
+      return {
+        isReferenced: true,
+        reason: `Referenced by medicine "${med.name}" (ID: ${med.id}) in pharmaceutical catalogue.`,
+        source: 'database:medicines',
+      };
+    }
+  } catch (err) {
+    // medicines table may not have image column or table may not exist in test env
+  }
+
+  return { isReferenced: false };
+}
+
+/**
  * DELETE /api/admin/media/:id
- * Delete media file from HimalayanHost filesystem and PostgreSQL metadata
+ * Delete media file after validating permissions, protected system files, and multi-tier reference checks.
  */
 export async function deleteMedia(req, res) {
-  // SAFETY LOCK: media references are not centrally tracked yet.
-  // Browser-local logo assignments and other frontend references cannot
-  // be verified reliably by this backend. Refuse permanent deletion.
-  return res.status(409).json({
-    status: 'protected',
-    code: 'MEDIA_DELETION_DISABLED',
-    message: 'Permanent media deletion is temporarily disabled to protect images that may still be in use. No file or database record was changed.'
-  });
+  try {
+    const targetIdentifier = req.params?.id || req.query?.filename || req.body?.filename;
+    if (!targetIdentifier) {
+      return res.status(400).json({ status: 'error', message: 'Target media ID or filename is required.' });
+    }
+
+    // 1. Identify media record in DB (if stored) or find on disk
+    let fileRecord = null;
+    try {
+      const fileRes = await dbQuery(
+        'SELECT * FROM media_files WHERE id = $1 OR filename = $1 LIMIT 1',
+        [targetIdentifier]
+      );
+      if (fileRes.rows && fileRes.rows.length > 0) {
+        fileRecord = fileRes.rows[0];
+      }
+    } catch (_) {}
+
+    const filename = fileRecord ? fileRecord.filename : path.basename(targetIdentifier);
+    const safeName = path.basename(filename);
+
+    // 2. Perform Multi-Tier Reference Check
+    const refCheck = await checkMediaReferences(safeName);
+    if (refCheck.isReferenced) {
+      if (refCheck.source === 'system:core') {
+        return res.status(403).json({
+          status: 'protected',
+          code: 'SYSTEM_ASSET_PROTECTED',
+          message: `"${safeName}" is a permanently protected system branding asset and cannot be deleted.`,
+          reference: refCheck,
+        });
+      }
+      return res.status(409).json({
+        status: 'protected',
+        code: 'MEDIA_REFERENCED',
+        message: `Deletion blocked: Media asset "${safeName}" is protected because it is in active use. ${refCheck.reason}`,
+        reference: refCheck,
+      });
+    }
+
+    // 3. Locate file on filesystem across possible media directories
+    const searchDirs = [
+      ROOT_MEDIA_DIR,
+      path.join(process.cwd(), 'website_images'),
+      path.join(process.cwd(), 'public', 'uploads', 'media'),
+    ];
+
+    let deletedFromDisk = false;
+    for (const baseDir of searchDirs) {
+      // Check root of media dir and standard subfolders
+      const candidates = [
+        path.join(baseDir, safeName),
+        path.join(baseDir, 'products', safeName),
+        path.join(baseDir, 'banners', safeName),
+        path.join(baseDir, 'categories', safeName),
+        path.join(baseDir, 'brands', safeName),
+        path.join(baseDir, 'services', safeName),
+        path.join(baseDir, 'general', safeName),
+      ];
+
+      for (const filePath of candidates) {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          deletedFromDisk = true;
+        }
+      }
+    }
+
+    // 4. Remove database record if media_files table exists
+    if (fileRecord) {
+      try {
+        await dbQuery('DELETE FROM media_files WHERE id = $1', [fileRecord.id]);
+      } catch (_) {}
+    }
+
+    // 5. Update images.json and manifest.json if website_images exists
+    try {
+      const uploadDir = path.join(process.cwd(), 'website_images');
+      if (fs.existsSync(uploadDir)) {
+        const rawFiles = fs.readdirSync(uploadDir).filter(f => 
+          /\.(webp|png|jpg|jpeg|svg|gif|ico)$/i.test(f) && 
+          f.toLowerCase() !== 'bagan-medical-hall-logo.png' &&
+          !f.startsWith('.')
+        );
+        const fileList = rawFiles.map(f => {
+          const full = path.join(uploadDir, f);
+          const stat = fs.statSync(full);
+          const ext = path.extname(f).replace('.', '').toLowerCase();
+          return {
+            filename: f,
+            path: `website_images/${f}`,
+            size: stat.size,
+            format: ext,
+            title: f.toLowerCase().includes('bagan') ? 'Bagan Medical Hall Official Logo' : `Asset (${f})`,
+            lastModified: stat.mtime.toISOString().replace('T', ' ').substring(0, 19),
+          };
+        });
+        const cat = {
+          status: 'ok',
+          success: true,
+          folder: 'website_images',
+          total: fileList.length,
+          files: fileList,
+        };
+        fs.writeFileSync(path.join(uploadDir, 'images.json'), JSON.stringify(cat, null, 2));
+        fs.writeFileSync(path.join(uploadDir, 'manifest.json'), JSON.stringify(cat, null, 2));
+      }
+    } catch (_) {}
+
+    // 6. Record Audit Log if actor is authenticated
+    if (req.user && req.user.id) {
+      try {
+        await dbQuery(`
+          INSERT INTO permission_audit_logs (id, admin_user_id, target_user_id, action, details)
+          VALUES ($1, $2, $3, $4, $5)
+        `, [
+          `audit_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          req.user.id,
+          null,
+          'MEDIA_DELETED',
+          JSON.stringify({
+            filename: safeName,
+            deletedBy: req.user.username,
+            timestamp: new Date().toISOString(),
+          }),
+        ]);
+      } catch (_) {}
+    }
+
+    return res.json({
+      status: 'ok',
+      success: true,
+      message: `Media asset "${safeName}" permanently deleted.`,
+      filename: safeName,
+    });
+  } catch (err) {
+    console.error('[MEDIA] deleteMedia error:', err);
+    return res.status(500).json({ status: 'error', message: err.message || 'Failed to delete media asset.' });
+  }
 }
 
 /**

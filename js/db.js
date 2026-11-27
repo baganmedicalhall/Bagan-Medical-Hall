@@ -885,14 +885,14 @@ const DEFAULT_GLOBAL_SETTINGS = {
   tagline: 'Your Trusted Pharmacy & Clinical Dispensary',
   logo: 'BMH', // text emblem
   logoType: 'image', // 'image' or 'text'
-  logoColored: 'website_images/bagan-medical-hall-logo.webp', // Coloured logo for light backgrounds (receipts, white card)
+  logoColored: 'website_images/default-logo-colored.svg', // Coloured logo for light backgrounds (receipts, white card)
   logoColoredData: '',
-  logoWhite: 'website_images/bagan-medical-hall-logo.webp', // White logo for dark backgrounds (sidebar)
+  logoWhite: 'website_images/default-logo-white.svg', // White logo for dark backgrounds (sidebar)
   logoWhiteData: '',
   fallbackLogoImage: 'website_images/default-logo-fallback.svg', // Image for fallback logo
   fallbackLogoData: DEFAULT_FALLBACK_LOGO_DATA_URI,
   fallbackType: 'image', // 'image' or 'text'
-  logoImage: 'website_images/bagan-medical-hall-logo.webp', // legacy alias
+  logoImage: 'website_images/default-logo-colored.svg', // legacy alias
   logoData: '',
   primaryColor: '#0284c7',
   secondaryColor: '#0f766e',

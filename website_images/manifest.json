@@ -1,46 +1,98 @@
 ﻿{
-    "files":  [
-                  {
-                      "format":  "webp",
-                      "lastModified":  "2026-11-24 09:21:11",
-                      "path":  "website_images/bagan-medical-hall-logo.webp",
-                      "filename":  "bagan-medical-hall-logo.webp",
-                      "title":  "Bagan Medical Hall Official Logo",
-                      "size":  28944
-                  },
-                  {
-                      "format":  "svg",
-                      "lastModified":  "2026-11-20 11:58:47",
-                      "path":  "website_images/default-logo-colored.svg",
-                      "filename":  "default-logo-colored.svg",
-                      "title":  "Asset (default-logo-colored.svg)",
-                      "size":  667
-                  },
-                  {
-                      "format":  "svg",
-                      "lastModified":  "2026-11-20 11:58:59",
-                      "path":  "website_images/default-logo-fallback.svg",
-                      "filename":  "default-logo-fallback.svg",
-                      "title":  "Asset (default-logo-fallback.svg)",
-                      "size":  339
-                  },
-                  {
-                      "format":  "svg",
-                      "lastModified":  "2026-11-20 11:58:54",
-                      "path":  "website_images/default-logo-white.svg",
-                      "filename":  "default-logo-white.svg",
-                      "title":  "Asset (default-logo-white.svg)",
-                      "size":  707
-                  },
-                  {
-                      "format":  "svg",
-                      "lastModified":  "2026-11-20 11:49:16",
-                      "path":  "website_images/default-logo.svg",
-                      "filename":  "default-logo.svg",
-                      "title":  "Asset (default-logo.svg)",
-                      "size":  824
-                  }
-              ],
-    "folder":  "website_images",
-    "success":  true
+  "status": "ok",
+  "success": true,
+  "folder": "website_images",
+  "total": 4,
+  "media": [
+    {
+      "id": "med_default_logo_colored_svg",
+      "filename": "default-logo-colored.svg",
+      "originalFilename": "default-logo-colored.svg",
+      "filePath": "website_images/default-logo-colored.svg",
+      "url": "website_images/default-logo-colored.svg",
+      "mimeType": "image/svg+xml",
+      "fileSize": 667,
+      "folderId": "folder-general",
+      "folderName": "General",
+      "folderSlug": "general",
+      "createdAt": "2026-11-20 11:58:47",
+      "updatedAt": "2026-11-20 11:58:47"
+    },
+    {
+      "id": "med_default_logo_fallback_svg",
+      "filename": "default-logo-fallback.svg",
+      "originalFilename": "default-logo-fallback.svg",
+      "filePath": "website_images/default-logo-fallback.svg",
+      "url": "website_images/default-logo-fallback.svg",
+      "mimeType": "image/svg+xml",
+      "fileSize": 339,
+      "folderId": "folder-general",
+      "folderName": "General",
+      "folderSlug": "general",
+      "createdAt": "2026-11-20 11:58:59",
+      "updatedAt": "2026-11-20 11:58:59"
+    },
+    {
+      "id": "med_default_logo_white_svg",
+      "filename": "default-logo-white.svg",
+      "originalFilename": "default-logo-white.svg",
+      "filePath": "website_images/default-logo-white.svg",
+      "url": "website_images/default-logo-white.svg",
+      "mimeType": "image/svg+xml",
+      "fileSize": 707,
+      "folderId": "folder-general",
+      "folderName": "General",
+      "folderSlug": "general",
+      "createdAt": "2026-11-20 11:58:54",
+      "updatedAt": "2026-11-20 11:58:54"
+    },
+    {
+      "id": "med_default_logo_svg",
+      "filename": "default-logo.svg",
+      "originalFilename": "default-logo.svg",
+      "filePath": "website_images/default-logo.svg",
+      "url": "website_images/default-logo.svg",
+      "mimeType": "image/svg+xml",
+      "fileSize": 824,
+      "folderId": "folder-general",
+      "folderName": "General",
+      "folderSlug": "general",
+      "createdAt": "2026-11-20 11:49:16",
+      "updatedAt": "2026-11-20 11:49:16"
+    }
+  ],
+  "files": [
+    {
+      "filename": "default-logo-colored.svg",
+      "path": "website_images/default-logo-colored.svg",
+      "size": 667,
+      "format": "svg",
+      "title": "System Asset (default-logo-colored.svg)",
+      "lastModified": "2026-11-20 11:58:47"
+    },
+    {
+      "filename": "default-logo-fallback.svg",
+      "path": "website_images/default-logo-fallback.svg",
+      "size": 339,
+      "format": "svg",
+      "title": "System Asset (default-logo-fallback.svg)",
+      "lastModified": "2026-11-20 11:58:59"
+    },
+    {
+      "filename": "default-logo-white.svg",
+      "path": "website_images/default-logo-white.svg",
+      "size": 707,
+      "format": "svg",
+      "title": "System Asset (default-logo-white.svg)",
+      "lastModified": "2026-11-20 11:58:54"
+    },
+    {
+      "filename": "default-logo.svg",
+      "path": "website_images/default-logo.svg",
+      "size": 824,
+      "format": "svg",
+      "title": "System Asset (default-logo.svg)",
+      "lastModified": "2026-11-20 11:49:16"
+    }
+  ]
 }

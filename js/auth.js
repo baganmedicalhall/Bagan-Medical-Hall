@@ -18,8 +18,95 @@ const Auth = {
   currentUser: null,
   activeHubSection: 'staff', // 'staff', 'global', 'page', 'database'
   loginMode: 'staff', // 'staff' or 'developer'
+  serverStaffList: [],
+  serverStaffLoaded: false,
+  staffSubView: 'accounts', // 'accounts' or 'audit'
+  auditLogsList: [],
+  csrfToken: '',
+  authToken: '',
+  resetToken: '',
 
-  init() {
+  async apiRequest(url, options = {}) {
+    const opts = {
+      credentials: 'same-origin',
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(this.csrfToken ? { 'X-CSRF-Token': this.csrfToken } : {}),
+        ...(this.authToken ? { 'Authorization': `Bearer ${this.authToken}` } : {}),
+        ...(options.headers || {}),
+      },
+    };
+    try {
+      const response = await fetch(url, opts);
+      const data = await response.json().catch(() => ({}));
+      return { ok: response.ok, status: response.status, data };
+    } catch (err) {
+      console.warn('[AUTH_API_REQUEST_ERROR]', url, err);
+      return { ok: false, status: 0, data: { message: err.message || 'Network connection failed.' } };
+    }
+  },
+
+  isMockAllowed() {
+    // Production strictly enforces fail-closed server-authoritative authentication.
+    // Browser-local mock operations are permitted ONLY when explicitly enabled
+    // on a local development origin (localhost/127.0.0.1) via window.BMH_ENABLE_LOCAL_MOCK === true
+    // or localStorage flag 'bmh_enable_local_mock' === 'true'.
+    if (typeof window === 'undefined') return false;
+    const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    let isExplicitlyEnabled = false;
+    try {
+      isExplicitlyEnabled = window.BMH_ENABLE_LOCAL_MOCK === true || 
+        localStorage.getItem('bmh_enable_local_mock') === 'true';
+    } catch (_) {}
+    return Boolean(isLocalHost && isExplicitlyEnabled);
+  },
+
+  async loadServerStaff() {
+    this.serverStaffLoading = true;
+    try {
+      const res = await this.apiRequest('/api/admin/staff');
+      if (res.ok && res.data && Array.isArray(res.data.staff)) {
+        this.serverStaffList = res.data.staff;
+        this.serverStaffLoaded = true;
+        this.serverStaffError = null;
+      } else {
+        this.serverStaffLoaded = false;
+        this.serverStaffError = res.data?.message || 'Database connection error: Could not verify staff records.';
+        if (!this.isMockAllowed()) {
+          this.serverStaffList = [];
+        }
+      }
+    } catch (e) {
+      this.serverStaffLoaded = false;
+      this.serverStaffError = e.message || 'Network connection failed.';
+      if (!this.isMockAllowed()) {
+        this.serverStaffList = [];
+      }
+    } finally {
+      this.serverStaffLoading = false;
+    }
+  },
+
+  async loadAuditLogs() {
+    try {
+      const res = await this.apiRequest('/api/admin/audit-logs');
+      if (res.ok && res.data && Array.isArray(res.data.logs)) {
+        this.auditLogsList = res.data.logs;
+      } else {
+        if (!this.isMockAllowed()) {
+          this.auditLogsList = [];
+        }
+      }
+    } catch (e) {
+      console.warn('[LOAD_AUDIT_LOGS_FAILED]', e);
+      if (!this.isMockAllowed()) {
+        this.auditLogsList = [];
+      }
+    }
+  },
+
+  async init() {
     // Purge any stale legacy session keys from previous sessions
     try {
       localStorage.removeItem(LEGACY_AUTH_STORAGE_KEY);
@@ -27,7 +114,53 @@ const Auth = {
       localStorage.removeItem('apex_rx_active_session_v1');
     } catch (_) {}
 
-    // Check current active session only
+    // Verify session authoritatively with backend /api/auth/me
+    let verifiedSession = false;
+    try {
+      const meRes = await this.apiRequest('/api/auth/me');
+      if (meRes.ok && meRes.data && meRes.data.user) {
+        this.currentUser = {
+          ...meRes.data.user,
+          permissions: meRes.data.permissions || meRes.data.user.permissions || {},
+        };
+        this.csrfToken = meRes.data.csrfToken || '';
+        verifiedSession = true;
+      } else if (meRes.status === 401 || meRes.status === 403) {
+        // Session expired, revoked or account deactivated
+        this.clearStoredSession();
+        this.currentUser = null;
+        this.showLogin();
+        if (meRes.data?.message && !this.isMockAllowed()) {
+          const alertEl = document.getElementById('login-error-alert');
+          if (alertEl) {
+            alertEl.textContent = meRes.data.message;
+            alertEl.style.display = 'block';
+          }
+        }
+        return;
+      }
+    } catch (e) {
+      console.warn('[AUTH_ME_UNAVAILABLE]', e);
+    }
+
+    if (verifiedSession) {
+      if (this.currentUser?.mustResetPassword) {
+        this.showMustResetPasswordModal();
+      } else {
+        this.applyUserSession();
+      }
+      return;
+    }
+
+    // Fail-Closed: In production, unverified or failed connections reject authentication
+    if (!this.isMockAllowed()) {
+      this.currentUser = null;
+      this.clearStoredSession();
+      this.showLogin();
+      return;
+    }
+
+    // Mock session fallback ONLY in explicitly enabled local development
     const saved = localStorage.getItem(AUTH_STORAGE_KEY) || sessionStorage.getItem(AUTH_STORAGE_KEY);
     if (saved) {
       try {
@@ -71,21 +204,95 @@ const Auth = {
   },
 
   isDeveloper() {
-    return this.currentUser && (this.currentUser.role === 'developer' || this.currentUser.permissions?.devTools);
+    return this.currentUser && (this.currentUser.role === 'developer' || this.currentUser.permissions?.devTools || this.currentUser.is_super_admin);
   },
 
   hasPermission(permKey) {
     if (!this.currentUser) return false;
-    if (this.isDeveloper()) return true; // Developers have all permissions
-    const liveUser = (pharmacyDB.data.staffMembers || []).find(s => s.id === this.currentUser.id || s.username.toLowerCase() === this.currentUser.username.toLowerCase());
-    const perms = liveUser ? liveUser.permissions : this.currentUser.permissions;
-    return !!(perms && perms[permKey]);
+    if (this.isDeveloper()) return true; // Developers and Super Admins have all permissions
+    // In server-authoritative mode, check this.currentUser.permissions object
+    if (this.currentUser.permissions && this.currentUser.permissions[permKey] !== undefined) {
+      return Boolean(this.currentUser.permissions[permKey]);
+    }
+    // Fallback ONLY in explicitly enabled local development mode
+    if (this.isMockAllowed()) {
+      const liveUser = (pharmacyDB.data.staffMembers || []).find(s => s.id === this.currentUser.id || s.username.toLowerCase() === this.currentUser.username.toLowerCase());
+      const perms = liveUser ? liveUser.permissions : this.currentUser.permissions;
+      return !!(perms && perms[permKey]);
+    }
+    return false;
   },
 
-  login(usernameOrEmail, password, remember = true) {
+  async login(usernameOrEmail, password, remember = true) {
     const cleanUser = (usernameOrEmail || '').trim().toLowerCase();
     const cleanPass = (password || '').trim();
 
+    // 1. Authoritative Backend Authentication
+    try {
+      const res = await this.apiRequest('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          username: cleanUser,
+          password: cleanPass,
+          remember: Boolean(remember),
+          requestedMode: this.loginMode,
+        }),
+      });
+
+      if (res.ok && res.data) {
+        // Mandatory First-Time Password Reset flow
+        if (res.data.status === 'must_reset_password' || res.data.user?.mustResetPassword) {
+          this.currentUser = {
+            ...res.data.user,
+            permissions: res.data.permissions || res.data.user?.permissions || {},
+          };
+          this.csrfToken = res.data.csrfToken || '';
+          this.resetToken = res.data.resetToken || '';
+          this.showMustResetPasswordModal();
+          return { success: true, mustResetPassword: true, user: this.currentUser };
+        }
+
+        if (res.data.status === 'ok') {
+          this.currentUser = {
+            ...res.data.user,
+            permissions: res.data.permissions || res.data.user?.permissions || {},
+          };
+          this.csrfToken = res.data.csrfToken || '';
+          if (this.currentUser.mustResetPassword) {
+            this.showMustResetPasswordModal();
+            return { success: true, mustResetPassword: true, user: this.currentUser };
+          }
+          const sessionData = JSON.stringify({
+            id: this.currentUser.id,
+            username: this.currentUser.username,
+            loginTime: new Date().toISOString(),
+          });
+          if (remember) {
+            localStorage.setItem(AUTH_STORAGE_KEY, sessionData);
+          } else {
+            sessionStorage.setItem(AUTH_STORAGE_KEY, sessionData);
+          }
+          this.applyUserSession();
+          return { success: true, user: this.currentUser };
+        }
+      }
+
+      if (res.status > 0) {
+        return { success: false, message: res.data?.message || 'Invalid credentials. Please verify username and password.' };
+      }
+    } catch (e) {
+      console.warn('[LOGIN_BACKEND_UNAVAILABLE]', e);
+    }
+
+    // 2. Fail-Closed in Production
+    if (!this.isMockAllowed()) {
+      return {
+        success: false,
+        message: 'Authentication service unavailable. Production security requires a verified server connection. Please try again or contact your administrator.',
+      };
+    }
+
+    // 3. Fallback ONLY in explicitly enabled local development environment
     const staffList = pharmacyDB.data.staffMembers || [];
     const user = staffList.find(s => {
       const matchUsername = s.username.toLowerCase() === cleanUser;
@@ -102,7 +309,17 @@ const Auth = {
       return { success: false, message: 'This staff account has been deactivated. Please contact the administrator.' };
     }
 
+    // Mode check for mock developer login
+    if (this.loginMode === 'developer' && user.role !== 'developer' && !user.permissions?.devTools) {
+      return { success: false, message: 'Access denied: This account is not authorized for Developer Portal login.' };
+    }
+
     this.currentUser = user;
+    if (user.mustResetPassword) {
+      this.showMustResetPasswordModal();
+      return { success: true, mustResetPassword: true, user };
+    }
+
     const sessionData = JSON.stringify({ id: user.id, username: user.username, loginTime: new Date().toISOString() });
     if (remember) {
       localStorage.setItem(AUTH_STORAGE_KEY, sessionData);
@@ -114,10 +331,20 @@ const Auth = {
     return { success: true, user };
   },
 
-  logout() {
+  async logout() {
+    try {
+      await this.apiRequest('/api/auth/logout', { method: 'POST' });
+    } catch (_) {}
     this.currentUser = null;
+    this.csrfToken = '';
+    this.authToken = '';
+    this.resetToken = '';
     this.clearStoredSession();
     this.loginMode = 'staff';
+
+    const resetModal = document.getElementById('must-reset-password-modal');
+    if (resetModal) resetModal.remove();
+
     if (typeof App !== 'undefined') {
       App.currentView = 'pos';
     }
@@ -144,6 +371,11 @@ const Auth = {
   },
 
   applyUserSession() {
+    if (this.currentUser?.mustResetPassword) {
+      this.showMustResetPasswordModal();
+      return;
+    }
+
     const loginEl = document.getElementById('login-screen');
     const appEl = document.getElementById('app-container');
     if (loginEl) loginEl.style.display = 'none';
@@ -268,6 +500,223 @@ const Auth = {
   },
 
   /* -------------------------------------------------------------
+   * MANDATORY FIRST-TIME PASSWORD RESET MODAL
+   * Required when user.must_reset_password = TRUE
+   * Inescapable: blocks dispensary access until updated.
+   * ------------------------------------------------------------- */
+  showMustResetPasswordModal() {
+    // Remove any existing reset modal to prevent duplicates
+    const existing = document.getElementById('must-reset-password-modal');
+    if (existing) existing.remove();
+
+    const isDev = this.isDeveloper();
+    const accentColor = isDev ? '#7c3aed' : '#0284c7';
+    const userRoleText = isDev ? 'Developer / Super Admin' : (this.currentUser?.roleTitle || this.currentUser?.role || 'Staff Member');
+    const userNameText = this.currentUser?.name || this.currentUser?.username || 'User';
+
+    const modalHtml = `
+      <div class="modal-overlay unescapable-modal" id="must-reset-password-modal" style="position: fixed; inset: 0; background: rgba(15, 23, 42, 0.85); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 1rem; backdrop-filter: blur(4px);">
+        <div class="modal-card" style="background: white; border-radius: 12px; max-width: 460px; width: 100%; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.35); overflow: hidden; border-top: 5px solid ${accentColor}; animation: modalFadeIn 0.2s ease-out;">
+          
+          <!-- Header -->
+          <div style="padding: 1.5rem 1.5rem 1rem 1.5rem; text-align: center;">
+            <div style="width: 56px; height: 56px; border-radius: 50%; background: ${isDev ? '#f5f3ff' : '#eff6ff'}; display: inline-flex; align-items: center; justify-content: center; font-size: 1.75rem; margin-bottom: 0.75rem; border: 2px solid ${isDev ? '#ddd6fe' : '#bfdbfe'};">
+              🔒
+            </div>
+            <h2 style="font-size: 1.35rem; font-weight: 800; color: #0f172a; margin: 0 0 0.35rem 0;">
+              Password Reset Required
+            </h2>
+            <p style="font-size: 0.85rem; color: #64748b; margin: 0; line-height: 1.4;">
+              Welcome, <strong>${userNameText}</strong> (${userRoleText}).<br>
+              A private password must be configured before accessing dispensary operations.
+            </p>
+          </div>
+
+          <!-- Alert box -->
+          <div id="reset-password-alert" style="display: none; margin: 0 1.5rem 1rem 1.5rem; padding: 0.65rem 0.85rem; background: #fee2e2; border: 1px solid #fca5a5; border-radius: 8px; color: #dc2626; font-size: 0.82rem;"></div>
+
+          <!-- Form -->
+          <form id="form-must-reset-password" autocomplete="off" style="padding: 0 1.5rem 1.5rem 1.5rem;">
+            <div class="form-group" style="margin-bottom: 1rem;">
+              <label class="form-label" style="display: block; font-size: 0.82rem; font-weight: 600; color: #334155; margin-bottom: 0.35rem;">
+                Current / Temporary Password
+              </label>
+              <div class="login-input-wrap" style="position: relative;">
+                <span class="login-input-icon" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); font-size: 0.9rem;">🔑</span>
+                <input type="password" id="reset-current-password" class="form-control" placeholder="Enter current/temporary password" required style="padding-left: 2.5rem; width: 100%; height: 42px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.9rem;">
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 1rem;">
+              <label class="form-label" style="display: block; font-size: 0.82rem; font-weight: 600; color: #334155; margin-bottom: 0.35rem;">
+                New Password <span style="font-weight: 400; color: #64748b;">(at least 8 characters)</span>
+              </label>
+              <div class="login-input-wrap" style="position: relative;">
+                <span class="login-input-icon" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); font-size: 0.9rem;">🔒</span>
+                <input type="password" id="reset-new-password" class="form-control" placeholder="Enter new password (min. 8 characters)" minlength="8" required style="padding-left: 2.5rem; width: 100%; height: 42px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.9rem;">
+                <button type="button" id="btn-toggle-reset-new" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #94a3b8; font-size: 0.85rem;">👁️</button>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 1.25rem;">
+              <label class="form-label" style="display: block; font-size: 0.82rem; font-weight: 600; color: #334155; margin-bottom: 0.35rem;">
+                Confirm New Password
+              </label>
+              <div class="login-input-wrap" style="position: relative;">
+                <span class="login-input-icon" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); font-size: 0.9rem;">✓</span>
+                <input type="password" id="reset-confirm-password" class="form-control" placeholder="Confirm new password" minlength="8" required style="padding-left: 2.5rem; width: 100%; height: 42px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.9rem;">
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 0.75rem;">
+              <button type="button" id="btn-cancel-reset-password" class="btn btn-outline" style="flex: 1; height: 42px; font-size: 0.88rem; justify-content: center;">
+                Cancel & Sign Out
+              </button>
+              <button type="submit" id="btn-submit-reset-password" class="btn btn-primary" style="flex: 1.5; height: 42px; font-size: 0.88rem; justify-content: center; background: ${accentColor}; border-color: ${accentColor};">
+                Update & Proceed →
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+    // Toggle password view
+    const toggleBtn = document.getElementById('btn-toggle-reset-new');
+    const newPassInput = document.getElementById('reset-new-password');
+    if (toggleBtn && newPassInput) {
+      toggleBtn.addEventListener('click', () => {
+        if (newPassInput.type === 'password') {
+          newPassInput.type = 'text';
+          toggleBtn.textContent = '🔒';
+        } else {
+          newPassInput.type = 'password';
+          toggleBtn.textContent = '👁️';
+        }
+      });
+    }
+
+    // Cancel -> Logout
+    const cancelBtn = document.getElementById('btn-cancel-reset-password');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => this.logout());
+    }
+
+    // Form submit
+    const form = document.getElementById('form-must-reset-password');
+    const alertEl = document.getElementById('reset-password-alert');
+    const submitBtn = document.getElementById('btn-submit-reset-password');
+
+    if (form) {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const currentPass = document.getElementById('reset-current-password').value.trim();
+        const newPass = document.getElementById('reset-new-password').value.trim();
+        const confirmPass = document.getElementById('reset-confirm-password').value.trim();
+
+        if (newPass.length < 8) {
+          alertEl.textContent = 'New password must be at least 8 characters long.';
+          alertEl.style.display = 'block';
+          return;
+        }
+
+        if (newPass !== confirmPass) {
+          alertEl.textContent = 'New password and confirmation do not match.';
+          alertEl.style.display = 'block';
+          return;
+        }
+
+        if (newPass === currentPass) {
+          alertEl.textContent = 'New password must be different from current password.';
+          alertEl.style.display = 'block';
+          return;
+        }
+
+        alertEl.style.display = 'none';
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Updating...';
+
+        try {
+          const bodyPayload = {
+            oldPassword: currentPass,
+            newPassword: newPass,
+          };
+          if (this.resetToken) {
+            bodyPayload.resetToken = this.resetToken;
+          }
+
+          const res = await this.apiRequest('/api/auth/change-password', {
+            method: 'POST',
+            body: JSON.stringify(bodyPayload),
+          });
+
+          if (res.ok && res.data && res.data.status === 'ok') {
+            const usernameToLogin = this.currentUser?.username;
+            const modal = document.getElementById('must-reset-password-modal');
+            if (modal) modal.remove();
+            this.resetToken = '';
+
+            if (typeof App !== 'undefined' && App.showToast) {
+              App.showToast('Password updated successfully! Logging you in...', 'success');
+            }
+
+            // Auto-login with new password to obtain full active session
+            if (usernameToLogin) {
+              const loginRes = await this.login(usernameToLogin, newPass, true);
+              if (loginRes.success && !loginRes.mustResetPassword) {
+                return;
+              }
+            }
+
+            // Fallback: Prompt login
+            this.showLogin();
+            return;
+          }
+
+          if (res.status > 0) {
+            alertEl.textContent = res.data?.message || 'Failed to update password. Please check your current password.';
+            alertEl.style.display = 'block';
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Update & Proceed →';
+            return;
+          }
+        } catch (err) {
+          console.warn('[CHANGE_PASSWORD_ERROR]', err);
+        }
+
+        // Mock fallback if explicitly allowed in local environment
+        if (this.isMockAllowed()) {
+          const staffList = pharmacyDB.data.staffMembers || [];
+          const user = staffList.find(s => s.id === this.currentUser?.id || s.username === this.currentUser?.username);
+          if (user) {
+            user.password = newPass;
+            user.mustResetPassword = false;
+            if (pharmacyDB.save) pharmacyDB.save();
+          }
+          if (this.currentUser) {
+            this.currentUser.mustResetPassword = false;
+          }
+          const modal = document.getElementById('must-reset-password-modal');
+          if (modal) modal.remove();
+          if (typeof App !== 'undefined' && App.showToast) {
+            App.showToast('Password updated successfully! (Development Mode)', 'success');
+          }
+          this.applyUserSession();
+          return;
+        }
+
+        // Production fail-closed
+        alertEl.textContent = 'Authentication service is unavailable. Please try again or contact your administrator.';
+        alertEl.style.display = 'block';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Update & Proceed →';
+      });
+    }
+  },
+
+  /* -------------------------------------------------------------
    * LOGIN SCREEN (Clicking Logo Opens Developer Login)
    * Only 2 options: Staff (Default) & Developer (Via Logo click)
    * ------------------------------------------------------------- */
@@ -372,8 +821,8 @@ const Auth = {
           </button>
         </form>
 
-        <!-- Test Credentials Box (Only 2 Roles: Staff & Developer) -->
-        ${pageSettings.showTestCredentials ? `
+        <!-- Test Credentials Box (Allowed ONLY in explicitly enabled local development environment) -->
+        ${(pageSettings.showTestCredentials && this.isMockAllowed()) ? `
           <div class="test-creds-container">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
               <span style="font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; color: #64748b;">
@@ -477,15 +926,21 @@ const Auth = {
     // Submit
     const form = document.getElementById('pharmacy-login-form');
     if (form) {
-      form.addEventListener('submit', (e) => {
+      form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const username = document.getElementById('login-username').value;
         const password = document.getElementById('login-password').value;
         const remember = document.getElementById('login-remember').checked;
 
-        const res = this.login(username, password, remember);
+        const res = await this.login(username, password, remember);
         if (res.success) {
-          App.showToast(`Welcome back, ${res.user.name}!`, 'success');
+          if (res.mustResetPassword) {
+            if (typeof App !== 'undefined' && App.showToast) {
+              App.showToast('First-time login: Password reset is required.', 'info');
+            }
+          } else {
+            App.showToast(`Welcome back, ${res.user.name}!`, 'success');
+          }
         } else {
           const alertEl = document.getElementById('login-error-alert');
           alertEl.textContent = res.message;
@@ -505,6 +960,17 @@ const Auth = {
    * ------------------------------------------------------------- */
   renderDeveloperHub(activeSection = 'staff') {
     this.activeHubSection = activeSection;
+    if (!this.serverStaffLoaded) {
+      this.loadServerStaff().then(() => {
+        if (this.activeHubSection === 'staff') {
+          const bodyEl = document.getElementById('dev-hub-section-body');
+          if (bodyEl) {
+            bodyEl.innerHTML = this.renderSectionContent('staff');
+            this.bindHubSectionEvents();
+          }
+        }
+      });
+    }
     const container = document.getElementById('view-container');
     if (!container) return;
 
@@ -638,20 +1104,72 @@ const Auth = {
    * SECTION 1: Staff Accounts and Permission
    * ------------------------------------------------------------- */
   renderStaffSection() {
-    const staffList = pharmacyDB.data.staffMembers || [];
+    if (this.staffSubView === 'audit') {
+      return this.renderAuditLogsSection();
+    }
+
+    // Fail-Closed in production if authoritative server staff has not loaded
+    if (!this.serverStaffLoaded && !this.isMockAllowed()) {
+      return `
+        <div class="app-card" style="border-left: 4px solid #ef4444; background: #fffaf0;">
+          <div style="display: flex; align-items: flex-start; gap: 1rem;">
+            <span style="font-size: 2.2rem;">🔒</span>
+            <div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <h3 style="margin: 0; color: #991b1b; font-size: 1.15rem; font-weight: 700;">Authoritative Database Connection Required</h3>
+                <span style="font-size: 0.7rem; font-weight: 800; background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 9999px;">
+                  FAIL-CLOSED SECURITY ACTIVE
+                </span>
+              </div>
+              <p style="margin: 6px 0 0.75rem 0; color: #7f1d1d; font-size: 0.85rem; line-height: 1.4;">
+                ${this.serverStaffError || 'The Developer Hub cannot establish a verified connection to the PostgreSQL database.'}
+              </p>
+              <p style="margin: 0 0 1rem 0; color: #4b5563; font-size: 0.8rem;">
+                Production security strictly prohibits falling back to unverified browser storage for staff accounts, role assignments, or dynamic permission overrides.
+              </p>
+              <button class="btn btn-primary" id="btn-refresh-server-staff" style="font-size: 0.85rem;">
+                🔄 Retry Database Connection
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    const serverStaff = this.serverStaffList || [];
+    const localStaff = pharmacyDB.data.staffMembers || [];
+
+    // In production, display list is strictly server-authoritative
+    const displayList = this.serverStaffLoaded ? serverStaff : (this.isMockAllowed() ? localStaff : []);
+    const serverUsernames = new Set(serverStaff.map(s => (s.username || '').toLowerCase()));
+    const migrationCandidates = this.serverStaffLoaded ? localStaff.filter(s => !serverUsernames.has((s.username || '').toLowerCase())) : [];
 
     return `
       <div class="app-card">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 0.75rem;">
           <div>
-            <h2 style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin: 0;">Dispensary Staff Accounts & Governance</h2>
-            <p style="font-size: 0.8rem; color: #64748b; margin: 0;">Manage staff credentials and enforce individual module access controls.</p>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h2 style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin: 0;">Dispensary Staff Accounts & Dynamic Governance</h2>
+              <span style="font-size: 0.7rem; font-weight: 700; background: #ecfdf5; color: #059669; padding: 2px 8px; border-radius: 9999px;">
+                ● PostgreSQL RBAC
+              </span>
+            </div>
+            <p style="font-size: 0.8rem; color: #64748b; margin: 2px 0 0 0;">Server-authoritative credentials, role definitions, and dynamic permission overrides.</p>
           </div>
-          <button class="btn btn-success" id="btn-create-staff-hub" style="font-size: 0.85rem;">
-            ${getIcon('plus')} Create New Staff Member
-          </button>
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button class="btn btn-outline" id="btn-toggle-audit-view" style="font-size: 0.85rem; border-color: #cbd5e1;">
+              📋 View Audit Logs
+            </button>
+            <button class="btn btn-outline" id="btn-refresh-server-staff" style="font-size: 0.85rem; border-color: #cbd5e1;" title="Refresh Accounts from Database">
+              🔄 Sync Accounts
+            </button>
+            <button class="btn btn-success" id="btn-create-staff-hub" style="font-size: 0.85rem;">
+              ${getIcon('plus')} Create New Staff Member
+            </button>
+          </div>
         </div>
 
+        <!-- Authoritative Staff Table -->
         <div class="table-responsive">
           <table class="data-table">
             <thead>
@@ -660,15 +1178,17 @@ const Auth = {
                 <th>Role Category</th>
                 <th>Login Username</th>
                 <th>Account Status</th>
-                <th>Granular Permissions</th>
+                <th>Dynamic Permissions</th>
                 <th class="text-center">Action</th>
               </tr>
             </thead>
             <tbody>
-              ${staffList.map(s => {
-                const perms = s.permissions || {};
-                const activeCount = Object.values(perms).filter(Boolean).length;
-                const isSuper = s.role === 'developer';
+              ${displayList.map(s => {
+                const isSuper = Boolean(s.is_super_admin || s.role === 'developer');
+                const roleSlug = s.role_slug || s.role || 'staff';
+                const roleName = s.role_name || s.roleTitle || roleSlug;
+                const status = (s.status || 'active').toLowerCase();
+                const mustReset = Boolean(s.must_reset_password);
 
                 return `
                   <tr>
@@ -676,33 +1196,32 @@ const Auth = {
                       <div style="font-weight: 700; color: #0f172a; display: flex; align-items: center; gap: 6px;">
                         <span>${s.avatar || '🧑‍⚕️'}</span>
                         <span>${s.name}</span>
+                        ${isSuper ? '<span style="font-size: 0.65rem; background: #fdf2f8; color: #be185d; border: 1px solid #fbcfe8; padding: 1px 6px; border-radius: 9999px; font-weight: 800;">SUPER ADMIN</span>' : ''}
                       </div>
                       <div style="font-size: 0.74rem; color: #64748b;">${s.email || 'No email registered'} | ${s.phone || 'No phone'}</div>
                     </td>
                     <td>
                       <span style="font-size: 0.74rem; font-weight: 700; padding: 2px 8px; border-radius: 9999px; background: ${isSuper ? '#f5f3ff' : '#ecfdf5'}; color: ${isSuper ? '#7c3aed' : '#059669'};">
-                        ${s.roleTitle || s.role}
+                        ${roleName}
                       </span>
                     </td>
                     <td style="font-family: monospace; font-size: 0.84rem; font-weight: 600;">
                       ${s.username}
                     </td>
                     <td>
-                      <span style="font-size: 0.74rem; font-weight: 700; color: ${s.status === 'active' ? '#10b981' : '#dc2626'};">
-                        ● ${s.status.toUpperCase()}
-                      </span>
+                      <div style="display: flex; flex-direction: column; gap: 2px;">
+                        <span style="font-size: 0.74rem; font-weight: 700; color: ${status === 'active' ? '#10b981' : '#dc2626'};">
+                          ● ${status.toUpperCase()}
+                        </span>
+                        ${mustReset ? '<span style="font-size: 0.68rem; color: #d97706; font-weight: 600;">⚠️ Password Reset Pending</span>' : ''}
+                      </div>
                     </td>
                     <td>
                       <div style="font-size: 0.78rem; font-weight: 600; color: #334155;">
-                        ${isSuper ? '<strong style="color: #7c3aed;">Full Unrestricted Super Admin</strong>' : `${activeCount} / 10 Permissions Enabled`}
+                        ${isSuper ? '<strong style="color: #7c3aed;">Full Unrestricted Authority</strong>' : 'Dynamic Role & Overrides'}
                       </div>
-                      <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; font-size: 0.68rem;">
-                        ${perms.pos ? '<span class="quick-stats-chip" style="padding: 1px 5px;">POS</span>' : ''}
-                        ${perms.inventory ? '<span class="quick-stats-chip" style="padding: 1px 5px;">Inventory</span>' : ''}
-                        ${perms.patientLedger ? '<span class="quick-stats-chip" style="padding: 1px 5px;">Patients</span>' : ''}
-                        ${perms.supplierLedger ? '<span class="quick-stats-chip" style="padding: 1px 5px;">Suppliers</span>' : ''}
-                        ${perms.journalEntries ? '<span class="quick-stats-chip" style="padding: 1px 5px;">Journal</span>' : ''}
-                        ${perms.financialReports ? '<span class="quick-stats-chip" style="padding: 1px 5px;">Statements</span>' : ''}
+                      <div style="font-size: 0.72rem; color: #64748b; margin-top: 2px;">
+                        ${isSuper ? 'All 16 operational modules enabled' : 'Click "Overrides" to inspect/modify'}
                       </div>
                     </td>
                     <td class="text-center">
@@ -710,12 +1229,169 @@ const Auth = {
                         <button class="btn btn-outline btn-sm btn-edit-staff-hub" data-staff-id="${s.id}">
                           Edit
                         </button>
-                        ${s.id !== 'staff_dev' ? `
-                          <button class="btn btn-danger btn-sm btn-delete-staff-hub" data-staff-id="${s.id}">
+                        <button class="btn btn-outline btn-sm btn-manage-overrides-hub" data-staff-id="${s.id}" style="color: #4338ca; border-color: #c7d2fe;">
+                          Overrides
+                        </button>
+                        ${!isSuper ? `
+                          <button class="btn btn-danger btn-sm btn-delete-staff-hub" data-staff-id="${s.id}" title="Deactivate Account">
                             ${getIcon('trash')}
                           </button>
                         ` : ''}
                       </div>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        ${migrationCandidates.length > 0 ? `
+          <!-- Migration Candidates Section -->
+          <div style="margin-top: 2rem; border-top: 2px dashed #e2e8f0; padding-top: 1.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <h3 style="font-size: 1.05rem; font-weight: 700; color: #92400e; margin: 0;">📋 Migration Candidates (Local Profiles)</h3>
+                  <span style="font-size: 0.7rem; font-weight: 700; background: #fef3c7; color: #b45309; padding: 2px 8px; border-radius: 9999px;">
+                    ${migrationCandidates.length} Pending Provisioning
+                  </span>
+                </div>
+                <p style="font-size: 0.78rem; color: #78350f; margin: 2px 0 0 0;">
+                  These staff accounts exist in browser storage. Click "Provision Server Account" to assign a secure, expiring 12-character single-use password and record them in PostgreSQL.
+                </p>
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table" style="background: #fffbeb;">
+                <thead>
+                  <tr>
+                    <th>Candidate Profile</th>
+                    <th>Target Role</th>
+                    <th>Proposed Username</th>
+                    <th>Migration Status</th>
+                    <th class="text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${migrationCandidates.map(c => `
+                    <tr>
+                      <td>
+                        <div style="font-weight: 700; color: #0f172a; display: flex; align-items: center; gap: 6px;">
+                          <span>${c.avatar || '🧑‍⚕️'}</span>
+                          <span>${c.name}</span>
+                        </div>
+                        <div style="font-size: 0.74rem; color: #64748b;">${c.email || 'No email registered'} | ${c.phone || 'No phone'}</div>
+                      </td>
+                      <td>
+                        <span style="font-size: 0.74rem; font-weight: 700; padding: 2px 8px; border-radius: 9999px; background: #e0e7ff; color: #4338ca;">
+                          ${c.roleTitle || c.role}
+                        </span>
+                      </td>
+                      <td style="font-family: monospace; font-size: 0.84rem; font-weight: 600;">
+                        ${c.username}
+                      </td>
+                      <td>
+                        <span style="font-size: 0.72rem; font-weight: 700; background: #fef3c7; color: #b45309; padding: 2px 8px; border-radius: 9999px;">
+                          Ready to Provision
+                        </span>
+                      </td>
+                      <td class="text-center">
+                        <button class="btn btn-success btn-sm btn-provision-candidate" data-candidate-id="${c.id}" style="font-size: 0.78rem;">
+                          ${getIcon('plus')} Provision Account
+                        </button>
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  },
+
+  /* -------------------------------------------------------------
+   * SECTION 1B: Administrative Security Audit Trail
+   * ------------------------------------------------------------- */
+  renderAuditLogsSection() {
+    const logs = this.auditLogsList || [];
+
+    return `
+      <div class="app-card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 0.75rem;">
+          <div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h2 style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin: 0;">Administrative Security Audit Trail</h2>
+              <span style="font-size: 0.7rem; font-weight: 700; background: #e0e7ff; color: #4338ca; padding: 2px 8px; border-radius: 9999px;">
+                Immutable Audit Log
+              </span>
+            </div>
+            <p style="font-size: 0.8rem; color: #64748b; margin: 2px 0 0 0;">Real-time chronological log of staff provisioning, role updates, and dynamic permission overrides.</p>
+          </div>
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button class="btn btn-outline" id="btn-back-to-staff" style="font-size: 0.85rem; border-color: #cbd5e1;">
+              ← Back to Staff Accounts
+            </button>
+            <button class="btn btn-outline" id="btn-refresh-audit-logs" style="font-size: 0.85rem; border-color: #cbd5e1;">
+              🔄 Refresh Logs
+            </button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Acting Administrator</th>
+                <th>Action</th>
+                <th>Target User</th>
+                <th>Audit Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${logs.length === 0 ? `
+                <tr>
+                  <td colspan="5" class="text-center" style="padding: 2rem; color: #64748b;">
+                    No administrative audit logs recorded yet. All role updates, staff provisioning, and overrides will appear here.
+                  </td>
+                </tr>
+              ` : logs.map(l => {
+                let detailsText = '';
+                try {
+                  const d = typeof l.details === 'string' ? JSON.parse(l.details) : l.details;
+                  detailsText = JSON.stringify(d, null, 1).replace(/[{}"]/g, '');
+                } catch (_) {
+                  detailsText = String(l.details || '');
+                }
+
+                const actionColor = l.action === 'STAFF_PROVISIONED' ? '#059669' :
+                  (l.action === 'OVERRIDES_MODIFIED' ? '#7c3aed' :
+                  (l.action === 'STAFF_UPDATED' ? '#0284c7' : '#475569'));
+
+                return `
+                  <tr>
+                    <td style="font-size: 0.78rem; font-family: monospace; white-space: nowrap;">
+                      ${new Date(l.created_at).toLocaleString()}
+                    </td>
+                    <td>
+                      <div style="font-weight: 700; color: #0f172a; font-size: 0.82rem;">${l.admin_name || l.admin_username || 'System / Console'}</div>
+                      <div style="font-size: 0.72rem; color: #64748b;">@${l.admin_username || 'console'}</div>
+                    </td>
+                    <td>
+                      <span style="font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 9999px; background: ${actionColor}15; color: ${actionColor}; border: 1px solid ${actionColor}30;">
+                        ${l.action}
+                      </span>
+                    </td>
+                    <td>
+                      <div style="font-weight: 600; color: #0f172a; font-size: 0.82rem;">${l.target_name || l.target_username || '-'}</div>
+                      <div style="font-size: 0.72rem; color: #64748b;">@${l.target_username || '-'}</div>
+                    </td>
+                    <td style="font-size: 0.75rem; font-family: monospace; color: #334155; max-width: 300px; word-break: break-all;">
+                      ${detailsText}
                     </td>
                   </tr>
                 `;
@@ -1307,6 +1983,12 @@ const Auth = {
             const isFallback = (g.fallbackLogoImage === item.path || (item.dataUrl && g.fallbackLogoData === item.dataUrl));
             const isWebp = item.filename && (item.filename.toLowerCase().endsWith('.webp') || item.format === 'webp');
 
+            const medicines = pharmacyDB.data.medicines || [];
+            const isCatalogRef = medicines.some(m => m.image && (m.image === item.path || m.image === item.filename));
+            const isProtectedSysFile = (item.filename || '').toLowerCase() === 'bagan-medical-hall-logo.png' || (item.filename || '').toLowerCase().startsWith('default-logo');
+            const isReferenced = Boolean(isColLogo || isWhiteLogo || isFallback || isCatalogRef || isProtectedSysFile);
+            const canDelete = Boolean(this.isDeveloper() || this.hasPermission('mediaDelete'));
+
             return `
               <div class="media-card" data-filename="${item.filename.toLowerCase()}" style="background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.85rem; display: flex; flex-direction: column; transition: transform 0.15s ease, box-shadow 0.15s ease; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                 <!-- Preview Thumbnail with Checkerboard/Neutral BG -->
@@ -1352,9 +2034,19 @@ const Auth = {
                       📋 Copy Path
                     </button>
                   </div>
-                  <div class="media-delete-protected" role="note" style="font-size: 0.68rem; padding: 6px 4px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 5px; text-align: center;">
-                    🔒 Deletion protected
-                  </div>
+                  ${isReferenced ? `
+                    <div style="font-size: 0.68rem; padding: 4px 6px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 5px; text-align: center; font-weight: 600;" title="Asset is in active use">
+                      🔒 In Active Use (Protected)
+                    </div>
+                  ` : (canDelete ? `
+                    <button type="button" class="btn btn-danger btn-sm btn-delete-media-hub" data-filename="${item.filename}" data-id="${item.id || ''}" style="font-size: 0.68rem; padding: 4px 6px; justify-content: center; width: 100%;" title="Permanently delete unreferenced media">
+                      ${getIcon('trash')} Delete Asset
+                    </button>
+                  ` : `
+                    <div style="font-size: 0.65rem; padding: 4px; color: #64748b; background: #f1f5f9; border-radius: 4px; text-align: center;">
+                      Delete Restricted (Admin Only)
+                    </div>
+                  `)}
                 </div>
               </div>
             `;
@@ -1901,9 +2593,6 @@ const Auth = {
         const section = tile.getAttribute('data-hub-section');
 
         if (section === 'media') {
-          const authenticated = await App.ensureMediaAdminAuth();
-          if (!authenticated) return;
-
           const result = await App.syncMediaLibraryFromServer();
           if (!result.success) {
             App.showToast('Could not refresh server media. Check the connection and try again.', 'warning');
@@ -1914,27 +2603,129 @@ const Auth = {
       });
     });
 
-    // SECTION 1: Staff Events
+    // SECTION 1: Staff & Dynamic Governance Events
     const createStaffBtn = document.getElementById('btn-create-staff-hub');
     if (createStaffBtn) {
       createStaffBtn.addEventListener('click', () => this.showAddEditStaffModal(null));
     }
 
+    const toggleAuditBtn = document.getElementById('btn-toggle-audit-view');
+    if (toggleAuditBtn) {
+      toggleAuditBtn.addEventListener('click', async () => {
+        this.staffSubView = 'audit';
+        await this.loadAuditLogs();
+        this.renderDeveloperHub('staff');
+      });
+    }
+
+    const backToStaffBtn = document.getElementById('btn-back-to-staff');
+    if (backToStaffBtn) {
+      backToStaffBtn.addEventListener('click', () => {
+        this.staffSubView = 'accounts';
+        this.renderDeveloperHub('staff');
+      });
+    }
+
+    const refreshAuditBtn = document.getElementById('btn-refresh-audit-logs');
+    if (refreshAuditBtn) {
+      refreshAuditBtn.addEventListener('click', async () => {
+        await this.loadAuditLogs();
+        this.renderDeveloperHub('staff');
+      });
+    }
+
+    const refreshStaffBtn = document.getElementById('btn-refresh-server-staff');
+    if (refreshStaffBtn) {
+      refreshStaffBtn.addEventListener('click', async () => {
+        await this.loadServerStaff();
+        this.renderDeveloperHub('staff');
+        if (typeof App !== 'undefined' && App.showToast) {
+          App.showToast('Staff accounts synchronized with database.', 'info');
+        }
+      });
+    }
+
     document.querySelectorAll('.btn-edit-staff-hub').forEach(btn => {
       btn.addEventListener('click', () => {
         const id = btn.getAttribute('data-staff-id');
-        const staff = (pharmacyDB.data.staffMembers || []).find(s => s.id === id);
+        const staff = (this.serverStaffList || []).find(s => s.id === id) ||
+          (pharmacyDB.data.staffMembers || []).find(s => s.id === id);
         this.showAddEditStaffModal(staff);
       });
     });
 
-    document.querySelectorAll('.btn-delete-staff-hub').forEach(btn => {
+    document.querySelectorAll('.btn-manage-overrides-hub').forEach(btn => {
       btn.addEventListener('click', () => {
         const id = btn.getAttribute('data-staff-id');
-        if (confirm('Are you sure you want to delete this staff member?')) {
+        const staff = (this.serverStaffList || []).find(s => s.id === id) ||
+          (pharmacyDB.data.staffMembers || []).find(s => s.id === id);
+        this.showPermissionsOverrideModal(staff);
+      });
+    });
+
+    document.querySelectorAll('.btn-provision-candidate').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-candidate-id');
+        const candidate = (pharmacyDB.data.staffMembers || []).find(s => s.id === id);
+        if (!candidate) return;
+
+        if (!confirm(`Provision server-authoritative account for "${candidate.name}" (@${candidate.username})?\n\nA single-use 12-character temporary password will be generated, and mandatory password reset will be required upon initial login.`)) {
+          return;
+        }
+
+        const roleIdMap = {
+          pharmacist: 'role_pharmacist',
+          accountant: 'role_accountant',
+          developer: 'role_dev',
+          cashier: 'role_cashier',
+        };
+
+        btn.disabled = true;
+        btn.textContent = 'Provisioning...';
+
+        const res = await this.apiRequest('/api/admin/staff/provision', {
+          method: 'POST',
+          body: JSON.stringify({
+            username: candidate.username,
+            name: candidate.name,
+            roleId: roleIdMap[candidate.role] || 'role_pharmacist',
+            roleTitle: candidate.roleTitle,
+            email: candidate.email,
+            phone: candidate.phone,
+            avatar: candidate.avatar,
+          }),
+        });
+
+        if (res.ok && res.data && res.data.temporaryPassword) {
+          this.showTemporaryPasswordModal(candidate.username, res.data.temporaryPassword);
+        } else {
+          alert(res.data?.message || 'Failed to provision staff account.');
+        }
+
+        await this.loadServerStaff();
+        this.renderDeveloperHub('staff');
+      });
+    });
+
+    document.querySelectorAll('.btn-delete-staff-hub').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-staff-id');
+        const staff = (this.serverStaffList || []).find(s => s.id === id) ||
+          (pharmacyDB.data.staffMembers || []).find(s => s.id === id);
+        const name = staff ? staff.name : 'this staff member';
+
+        if (confirm(`Are you sure you want to deactivate account for ${name}? Active sessions will be terminated.`)) {
           try {
+            const res = await this.apiRequest(`/api/admin/staff/${id}`, {
+              method: 'PUT',
+              body: JSON.stringify({ status: 'inactive' }),
+            });
+
             pharmacyDB.deleteStaffMember(id);
-            App.showToast('Staff member deleted', 'info');
+            if (typeof App !== 'undefined' && App.showToast) {
+              App.showToast(`Staff account ${name} deactivated.`, 'info');
+            }
+            await this.loadServerStaff();
             this.renderDeveloperHub('staff');
           } catch (e) {
             alert(e.message);
@@ -2629,6 +3420,35 @@ const Auth = {
       });
     });
 
+    // Delete Media Asset (Developer & Super Admin with mediaDelete permission)
+    document.querySelectorAll('.btn-delete-media-hub').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const filename = btn.getAttribute('data-filename');
+        const id = btn.getAttribute('data-id');
+        if (!filename) return;
+
+        if (!confirm(`Are you sure you want to permanently delete "${filename}"?\n\nThis will remove the file from server storage. Any referenced logos or catalog images will be protected.`)) {
+          return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Deleting...';
+
+        try {
+          const res = await App.deleteMediaFile(filename, id);
+          if (res && res.success) {
+            App.showToast(`Media "${filename}" deleted permanently.`, 'success');
+            await App.syncMediaLibraryFromServer();
+            this.renderDeveloperHub('media');
+          }
+        } catch (err) {
+          alert(`Deletion Failed:\n${err.message}`);
+          btn.disabled = false;
+          btn.textContent = '🗑️ Delete Asset';
+        }
+      });
+    });
+
     // Refresh authenticated server media library
     const mcSyncBtn = document.getElementById('btn-sync-media-folder');
     if (mcSyncBtn) {
@@ -3274,13 +4094,13 @@ const Auth = {
     document.getElementById('btn-apply-role-preset').addEventListener('click', applyPreset);
 
     // Save Staff Member
-    document.getElementById('btn-save-staff-hub-member').addEventListener('click', () => {
+    document.getElementById('btn-save-staff-hub-member').addEventListener('click', async () => {
       const name = document.getElementById('hub-staff-name').value.trim();
       const username = document.getElementById('hub-staff-username').value.trim().toLowerCase();
       const password = document.getElementById('hub-staff-password').value.trim();
 
-      if (!name || !username || !password) {
-        alert('Name, Username, and Password are required.');
+      if (!name || !username) {
+        alert('Name and Username are required.');
         return;
       }
 
@@ -3289,6 +4109,13 @@ const Auth = {
       const email = document.getElementById('hub-staff-email').value.trim();
       const phone = document.getElementById('hub-staff-phone').value.trim();
       const status = document.getElementById('hub-staff-status').value;
+
+      const roleIdMap = {
+        pharmacist: 'role_pharmacist',
+        accountant: 'role_accountant',
+        developer: 'role_dev',
+        custom: 'role_pharmacist',
+      };
 
       const newPerms = {
         pos: document.getElementById('hp-pos').checked,
@@ -3311,7 +4138,7 @@ const Auth = {
         id: isEdit ? existingStaff.id : ('staff_' + Date.now().toString().slice(-6)),
         name,
         username,
-        password,
+        password: password || 'staff123',
         role,
         roleTitle,
         email,
@@ -3321,14 +4148,292 @@ const Auth = {
         permissions: newPerms
       };
 
-      pharmacyDB.saveStaffMember(staffData);
-      if (this.currentUser && (this.currentUser.id === staffData.id || this.currentUser.username.toLowerCase() === staffData.username.toLowerCase())) {
-        this.currentUser = { ...this.currentUser, ...staffData };
-        this.enforceSidebarPermissions();
+      const saveBtn = document.getElementById('btn-save-staff-hub-member');
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving...';
+
+      if (!isEdit) {
+        // Controlled Staff Provisioning via POST /api/admin/staff/provision
+        const payload = {
+          username,
+          name,
+          roleId: roleIdMap[role] || role,
+          roleTitle,
+          email: email || null,
+          phone: phone || null,
+          avatar: staffData.avatar,
+        };
+
+        const res = await this.apiRequest('/api/admin/staff/provision', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+
+        document.getElementById('staff-modal-hub').remove();
+
+        if (res.ok && res.data && res.data.temporaryPassword) {
+          staffData.id = res.data.staff?.id || staffData.id;
+          pharmacyDB.saveStaffMember(staffData);
+          this.showTemporaryPasswordModal(username, res.data.temporaryPassword);
+        } else {
+          if (!this.isMockAllowed()) {
+            alert(`Provisioning Failed: ${res.data?.message || 'Server rejected staff account creation. Production fails closed to prevent unverified accounts.'}`);
+            return;
+          }
+          pharmacyDB.saveStaffMember(staffData);
+          if (typeof App !== 'undefined' && App.showToast) {
+            App.showToast(`Staff member ${name} created locally (Dev Mock)!`, 'warning');
+          }
+        }
+      } else {
+        // Staff Profile Update via PUT /api/admin/staff/:id
+        const payload = {
+          name,
+          roleId: roleIdMap[role] || role,
+          roleTitle,
+          email: email || null,
+          phone: phone || null,
+          status,
+          avatar: staffData.avatar,
+        };
+
+        const res = await this.apiRequest(`/api/admin/staff/${existingStaff.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
+
+        document.getElementById('staff-modal-hub').remove();
+
+        if (res.ok) {
+          pharmacyDB.saveStaffMember(staffData);
+          if (this.currentUser && (this.currentUser.id === staffData.id || this.currentUser.username.toLowerCase() === staffData.username.toLowerCase())) {
+            this.currentUser = { ...this.currentUser, ...staffData };
+            this.enforceSidebarPermissions();
+          }
+          if (typeof App !== 'undefined' && App.showToast) {
+            App.showToast(`Staff member ${name} updated successfully!`, 'success');
+          }
+        } else {
+          if (!this.isMockAllowed()) {
+            alert(`Update Failed: ${res.data?.message || 'Server rejected staff update. Production fails closed.'}`);
+            return;
+          }
+          pharmacyDB.saveStaffMember(staffData);
+          alert(res.data?.message || 'Updated in local storage.');
+        }
       }
-      document.getElementById('staff-modal-hub').remove();
-      App.showToast(`Staff member ${name} saved!`, 'success');
+
+      await this.loadServerStaff();
       this.renderDeveloperHub('staff');
     });
+  },
+
+  /* -------------------------------------------------------------
+   * MODAL: Dynamic Permissions & Granular Overrides
+   * ------------------------------------------------------------- */
+  async showPermissionsOverrideModal(staff) {
+    if (!staff) return;
+
+    let permissionsData = null;
+    try {
+      const res = await this.apiRequest(`/api/admin/staff/${staff.id}/effective-permissions`);
+      if (res.ok && res.data && Array.isArray(res.data.permissions)) {
+        permissionsData = res.data.permissions;
+      } else {
+        if (!this.isMockAllowed()) {
+          alert(`Permissions Load Error: ${res.data?.message || 'Could not retrieve authoritative permissions from server. Production fails closed.'}`);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('[LOAD_PERMISSIONS_FAILED]', e);
+      if (!this.isMockAllowed()) {
+        alert('Network Connection Error: Could not connect to authoritative server.');
+        return;
+      }
+    }
+
+    if (!permissionsData) {
+      permissionsData = [
+        { code: 'pos', name: 'POS Dispensing & Billing', description: 'Create dispensing transactions and bills', isRoleGranted: true, hasOverride: false, effective: true },
+        { code: 'applyDiscounts', name: 'Apply Bill Discounts', description: 'Apply manual line-item or invoice discounts', isRoleGranted: false, hasOverride: false, effective: false },
+        { code: 'medicationTreatment', name: 'Medications & Treatments', description: 'Manage treatments and clinical regimen plans', isRoleGranted: true, hasOverride: false, effective: true },
+        { code: 'dailyRecords', name: 'Daily Drawer Balancing', description: 'Shift opening counts, drawer logs, daily closing', isRoleGranted: true, hasOverride: false, effective: true },
+        { code: 'inventory', name: 'View Drug Inventory', description: 'Browse stock balances, batch numbers, rack locations', isRoleGranted: true, hasOverride: false, effective: true },
+        { code: 'inventoryEdit', name: 'Modify Inventory Items', description: 'Create and update medicines and prices', isRoleGranted: false, hasOverride: false, effective: false },
+        { code: 'expiryWriteOff', name: 'Stock Expiry Quarantine', description: 'Quarantine expired drugs and perform write-offs', isRoleGranted: false, hasOverride: false, effective: false },
+        { code: 'patientLedger', name: 'Patient Credit & Ledgers', description: 'View receivables, patient statements and receipts', isRoleGranted: true, hasOverride: false, effective: true },
+        { code: 'supplierLedger', name: 'Supplier Accounts & GRN', description: 'Manage payables, inward stock purchases', isRoleGranted: false, hasOverride: false, effective: false },
+        { code: 'expenses', name: 'Operational Expenses', description: 'Record dispensary operating and petty cash expenses', isRoleGranted: true, hasOverride: false, effective: true },
+        { code: 'journalEntries', name: 'Manual Journal Vouchers', description: 'Create double-entry debit/credit adjustment entries', isRoleGranted: false, hasOverride: false, effective: false },
+        { code: 'financialReports', name: 'Financial Statements (P&L, BS)', description: 'Access balance sheets, trial balances, and audits', isRoleGranted: false, hasOverride: false, effective: false },
+        { code: 'mediaView', name: 'Browse Media Assets', description: 'Browse dispensary logos, product pictures and media', isRoleGranted: true, hasOverride: false, effective: true },
+        { code: 'mediaUpload', name: 'Upload Media Assets', description: 'Upload dispensary imagery with WebP conversion', isRoleGranted: false, hasOverride: false, effective: false },
+        { code: 'mediaDelete', name: 'Delete Media Assets', description: 'Permanently remove unreferenced media files', isRoleGranted: false, hasOverride: false, effective: false },
+        { code: 'staffManage', name: 'Manage Staff Accounts', description: 'Provision staff, configure roles, and set overrides', isRoleGranted: false, hasOverride: false, effective: false },
+        { code: 'backup', name: 'Database Backup & Export', description: 'Export PostgreSQL database dumps and audit archives', isRoleGranted: false, hasOverride: false, effective: false },
+      ];
+    }
+
+    const isSuper = Boolean(staff.is_super_admin || staff.role === 'developer');
+
+    const modalHtml = `
+      <div class="modal-overlay" id="staff-overrides-modal" style="z-index: 10002;">
+        <div class="modal-card" style="max-width: 740px; max-height: 90vh; display: flex; flex-direction: column;">
+          <div class="modal-header">
+            <div>
+              <h3 style="margin: 0; font-size: 1.15rem;">Dynamic Permissions & Overrides</h3>
+              <p style="margin: 2px 0 0 0; font-size: 0.8rem; color: #64748b;">
+                Configuring granular permissions for <strong>${staff.name}</strong> (@${staff.username})
+              </p>
+            </div>
+            <button class="btn-outline" style="border:none; padding:4px;" onclick="document.getElementById('staff-overrides-modal').remove()">${getIcon('close')}</button>
+          </div>
+          <div class="modal-body" style="padding: 1.25rem; overflow-y: auto; flex: 1;">
+            ${isSuper ? `
+              <div style="background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 8px; padding: 1rem; color: #6b21a8; font-size: 0.85rem;">
+                <strong>👑 Super Admin Account:</strong> This user holds unrestricted master authority. Super Admins possess all permissions unconditionally; individual overrides are not applicable.
+              </div>
+            ` : `
+              <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.85rem; font-size: 0.8rem; color: #475569; margin-bottom: 1rem;">
+                <strong>How Overrides Work:</strong> Role permissions apply by default. Set an override to <strong>Force Grant (Allow)</strong> to grant access beyond role defaults, or <strong>Force Revoke (Deny)</strong> to block a module even if the role grants it.
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 0.65rem;">
+                ${permissionsData.map(p => {
+                  const roleDefaultText = p.isRoleGranted ? 'Granted by Role' : 'Denied by Role';
+                  const roleDefaultColor = p.isRoleGranted ? '#059669' : '#dc2626';
+                  let currentVal = 'default';
+                  if (p.hasOverride) {
+                    currentVal = p.overrideVal ? 'grant' : 'revoke';
+                  }
+
+                  return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; background: white; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.65rem 0.85rem; gap: 1rem;">
+                      <div style="flex: 1;">
+                        <div style="font-weight: 700; font-size: 0.85rem; color: #0f172a;">${p.name || p.code}</div>
+                        <div style="font-size: 0.72rem; color: #64748b;">${p.description || p.code}</div>
+                        <div style="font-size: 0.7rem; color: ${roleDefaultColor}; font-weight: 600; margin-top: 2px;">
+                          Default: ${roleDefaultText}
+                        </div>
+                      </div>
+                      <div style="min-width: 175px;">
+                        <select class="form-control override-select" data-perm-code="${p.code}" style="font-size: 0.78rem; padding: 0.35rem 0.6rem;">
+                          <option value="default" ${currentVal === 'default' ? 'selected' : ''}>Inherit Role Default</option>
+                          <option value="grant" ${currentVal === 'grant' ? 'selected' : ''} style="color: #059669; font-weight: 700;">Force Grant (Allow)</option>
+                          <option value="revoke" ${currentVal === 'revoke' ? 'selected' : ''} style="color: #dc2626; font-weight: 700;">Force Revoke (Deny)</option>
+                        </select>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            `}
+          </div>
+          <div class="modal-footer" style="padding: 0.85rem 1.25rem;">
+            <button class="btn btn-secondary" onclick="document.getElementById('staff-overrides-modal').remove()">Cancel</button>
+            ${!isSuper ? `
+              <button class="btn btn-primary" id="btn-save-permission-overrides" data-staff-id="${staff.id}">
+                Save Overrides
+              </button>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+    const saveBtn = document.getElementById('btn-save-permission-overrides');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', async () => {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+
+        const selects = document.querySelectorAll('.override-select');
+        const overrides = [];
+
+        selects.forEach(sel => {
+          const code = sel.getAttribute('data-perm-code');
+          const val = sel.value;
+          if (val === 'default') {
+            overrides.push({ code, isGranted: null });
+          } else if (val === 'grant') {
+            overrides.push({ code, isGranted: true });
+          } else if (val === 'revoke') {
+            overrides.push({ code, isGranted: false });
+          }
+        });
+
+        const res = await this.apiRequest(`/api/admin/staff/${staff.id}/overrides`, {
+          method: 'POST',
+          body: JSON.stringify({ overrides }),
+        });
+
+        document.getElementById('staff-overrides-modal').remove();
+
+        if (res.ok) {
+          if (typeof App !== 'undefined' && App.showToast) {
+            App.showToast(`Permission overrides updated for ${staff.name}`, 'success');
+          }
+        } else {
+          alert(res.data?.message || 'Failed to update permission overrides.');
+        }
+
+        await this.loadServerStaff();
+        this.renderDeveloperHub('staff');
+      });
+    }
+  },
+
+  /* -------------------------------------------------------------
+   * MODAL: Single-Use Temporary Password Display
+   * ------------------------------------------------------------- */
+  showTemporaryPasswordModal(username, tempPass) {
+    const modalHtml = `
+      <div class="modal-overlay" id="temp-pass-modal" style="z-index: 10005;">
+        <div class="modal-card" style="max-width: 500px; text-align: center;">
+          <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">🔐</div>
+          <h3 style="margin: 0 0 0.5rem 0; font-size: 1.25rem; color: #0f172a;">Single-Use Temporary Password</h3>
+          <p style="font-size: 0.85rem; color: #475569; margin: 0 0 1rem 0;">
+            Staff account for <strong>${username}</strong> was successfully provisioned with mandatory first-login password reset.
+          </p>
+
+          <div style="background: #f1f5f9; border: 2px dashed #94a3b8; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <div style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; font-weight: 700; margin-bottom: 4px;">Temporary Password (Copy Now)</div>
+            <div id="temp-pass-display" style="font-family: monospace; font-size: 1.4rem; font-weight: 800; color: #0f172a; letter-spacing: 0.1em; user-select: all;">
+              ${tempPass}
+            </div>
+          </div>
+
+          <div style="background: #fffbeb; border: 1px solid #fef3c7; border-radius: 6px; padding: 0.65rem; font-size: 0.78rem; color: #92400e; margin-bottom: 1.25rem;">
+            ⚠️ <strong>Security Notice:</strong> This password is single-use and will not be displayed again. Please copy and provide it securely to the staff member.
+          </div>
+
+          <div style="display: flex; gap: 0.5rem; justify-content: center;">
+            <button class="btn btn-primary" id="btn-copy-temp-pass">
+              📋 Copy Password
+            </button>
+            <button class="btn btn-secondary" onclick="document.getElementById('temp-pass-modal').remove()">
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+    const copyBtn = document.getElementById('btn-copy-temp-pass');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(tempPass).then(() => {
+          copyBtn.textContent = '✓ Copied!';
+          setTimeout(() => { copyBtn.textContent = '📋 Copy Password'; }, 2000);
+        }).catch(() => {
+          alert(`Password: ${tempPass}`);
+        });
+      });
+    }
   }
 };

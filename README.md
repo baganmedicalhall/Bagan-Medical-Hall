@@ -41,17 +41,27 @@ Based on the system specification:
 
 ## 🔐 Multi-Tier Authentication & Access Rules
 
-1. **Staff Login (Default Portal)**:
+> [!WARNING]
+> **LOCAL TESTING / DEMONSTRATION CREDENTIALS ONLY:**  
+> The test accounts documented below (`pharmacist` / `user123` and `developer` / `dev123`) are provided **EXCLUSIVELY for local offline development, demonstration, and automated test environments**.  
+> **THEY MUST NEVER BE USED IN OR CONFIGURED FOR PRODUCTION.**  
+> 
+> In a production deployment:
+> - The database schema migrations create **ZERO default user accounts**. No default staff or developer accounts are silently seeded.
+> - The initial Developer Super Admin account must be provisioned exclusively via the controlled CLI script `node backend/scripts/bootstrapSuperAdmin.js`, which enforces exact database name confirmation and sets a unique, cryptographically strong password with mandatory first-login reset (`must_change_password = true`).
+> - All staff accounts must be provisioned individually through the Developer Hub with appropriate granular RBAC permissions.
+
+1. **Staff Login (Default Portal — Local Testing Account)**:
    - The default sign-in screen loaded by visitors.
-   - Default Test Account:
+   - Local Offline Test Account:
      - **Username**: `pharmacist`
      - **Password**: `user123`
    - Access is restricted strictly according to the permissions assigned to the staff account by the Developer.
 
-2. **Developer Login (Secret Access)**:
+2. **Developer Login (Secret Access — Local Testing Account)**:
    - Cashier tab has been removed. Only **Staff** and **Developer** exist.
    - Developer Login is opened **by clicking the [Rx] logo** at the top of the login card.
-   - Default Test Account:
+   - Local Offline Test Account:
      - **Username**: `developer`
      - **Password**: `dev123`
    - Unrestricted super-administrator access across all financial ledgers, settings, and developer governance.
@@ -144,30 +154,54 @@ Accessible by clicking **⚙️ Developer Hub** in the topbar or sidebar when lo
 
 ---
 
-## 🌐 Deploying to your Subdomain
+## 🌐 Isolated Staging Deployment Specification (Stage 9.2.1)
 
-Target Subdomain: `http://sociable-lavender-mule.devkumarrajbanshi.com.np/`
+Staging Domain: `https://joyful-brown-jellyfish.devkumarrajbanshi.com.np/`  
+Staging API URL: `https://joyful-brown-jellyfish.devkumarrajbanshi.com.np/api`  
+Node.js Target Runtime: `24.22.3` (cPanel Phusion Passenger)  
+Application Environment: `NODE_ENV=production` (isolated staging instance)  
 
-The deployment archive `pharmacy-pos-deploy.zip` contains all self-contained files:
-- `index.html`
-- `css/styles.css`
-- `js/icons.js`
-- `js/db.js`
-- `js/auth.js`
-- `js/pos.js`
-- `js/accounting.js`
-- `js/accounts-mgmt.js`
-- `js/inventory.js`
-- `js/dashboard.js`
-- `js/app.js`
+> [!CAUTION]
+> **STRICT PRODUCTION ISOLATION BOUNDARIES:**
+> The following production resources are **STRICTLY PROHIBITED** from being modified, targeted, or accessed during staging:
+> 1. Production Backend: `/home/devkumar/bagan-api` (PROHIBITED)
+> 2. Production Frontend: `/home/devkumar/bagan.medical.cpanel.site` (PROHIBITED)
+> 3. Permanently Forbidden Directory: `/home/devkumar/public_html` (PROHIBITED)
+> 4. Production PostgreSQL Databases: `devkumar_amritstore` and `devkumar_baganmedicalhall` (PROHIBITED)
+> 
+> Under NO circumstances should staging files or migrations be executed against production paths or databases.
 
-### Deployment Steps (via cPanel / File Manager):
-1. Log in to your hosting cPanel at `devkumarrajbanshi.com.np:2083`.
-2. Open **File Manager** and navigate to the document root directory for `sociable-lavender-mule.devkumarrajbanshi.com.np` (typically `public_html/sociable-lavender-mule` or `subdomains/sociable-lavender-mule`).
-3. Click **Upload** and upload `pharmacy-pos-deploy.zip`.
-4. Right-click `pharmacy-pos-deploy.zip` and select **Extract**.
-5. Ensure `index.html` resides directly in the root of the subdomain folder.
-6. Visit `http://sociable-lavender-mule.devkumarrajbanshi.com.np/` in any browser!
+### Staging Hosting Architecture & Split Layout:
+
+1. **Staging Backend Application Root (Node.js 24.22.3 / cPanel Phusion Passenger):**
+   - **Target Path:** `/home/devkumar/bagan-staging-api`
+   - **API Prefix:** `/api` (Reverse-proxied via web server)
+   - **Contents:** `server.js`, `package.json`, `package-lock.json`, `upload.php` (403 placeholder), `backend/`, and `database/` migration scripts.
+   - **Mandatory Environment Variables (configured in cPanel Node.js Application Manager):**
+     - `NODE_ENV=production`
+     - `DB_HOST=127.0.0.1`
+     - `DB_PORT=5432`
+     - `DB_NAME=devkumar_baganstaging` (Isolated staging database)
+     - `DB_USER=devkumar_adminbaganstaging` (Isolated staging DB user)
+     - `DB_PASSWORD=replace_with_strong_random_db_password` (Do not commit real password)
+     - `SESSION_SECRET=replace_with_at_least_32_char_crypto_random_session_secret`
+     - `CORS_ORIGIN=https://joyful-brown-jellyfish.devkumarrajbanshi.com.np`
+     - `MEDIA_UPLOAD_DIR=/home/devkumar/joyful-brown-jellyfish.103-233-58-13.cpanel.site/website_images`
+     - `MEDIA_PUBLIC_URL_PREFIX=/website_images`
+     - `TRUST_PROXY=loopback`
+   - **Database Migrations:** Apply `database/001_auth_system.sql`, `database/002_password_reset_isolation.sql`, and `database/003_media_center.sql` strictly against `devkumar_baganstaging`.
+   - **Passenger Restart:** `touch /home/devkumar/bagan-staging-api/tmp/restart.txt` (staging only).
+
+2. **Staging Frontend Document Root (Static Web Assets):**
+   - **Target Path:** `/home/devkumar/joyful-brown-jellyfish.103-233-58-13.cpanel.site`
+   - **Contents:** `index.html`, `css/styles.css`, `js/` (client application), and `website_images/` (branding assets).
+   - **Isolation Requirement:** Backend source files, database scripts, and `.env*` files must NEVER be deployed to the frontend document root.
+
+3. **Deployment Archive:**
+   - Staging candidate archive: `pharmacy-pos-staging-candidate-stage9.2.1.zip`
+   - Verified with 100% POSIX forward slashes (`/`), zero test files, zero duplicate migrations, and clean payload isolation.
+   - Preserves all historical release candidates (`9.1.9.1`, `9.1.9`, `9.1.8`, `9.1.7.1`, etc.).
+   - Actual deployment requires separate, explicit authorization.
 
 ---
 

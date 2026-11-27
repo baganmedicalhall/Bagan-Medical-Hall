@@ -1,0 +1,49 @@
+BAGAN MEDICAL HALL — STAGE 9.2.1 STAGING CANDIDATE DEPLOYMENT MANIFEST
+Generated at: 2026-11-27T07:01:11.813Z
+Package Candidate: pharmacy-pos-staging-candidate-stage9.2.1.zip
+Total Payload Files: 43
+Integrity Verification: Archive payload integrity is verified via external SHA-256 hashing. All payload files are listed below.
+--------------------------------------------------------------------------------
+7286f859a54599c5400bda8d16ab550f05be244c567b86746247405fb7e3d71f       19328  bagan-api/backend/authController.js
+5f27429b54c2ccca8d92c09f9a9c2d0cb61e38dec36be85e40ad6c200f092488       12264  bagan-api/backend/authMiddleware.js
+9ff95a94b28427c74f4ef90a82e55623c4137e2145d797948f18ec86216407bd         952  bagan-api/backend/authRoutes.js
+9c6617aabd2d821291d0a9890014060080ce275243501e530a72028fb2c6d4f1       12434  bagan-api/backend/authUtils.js
+c4a4fe0c8af20f77d8ead0d2c96d276a3d88b3b47b62d2cbda002547ee86224a        2440  bagan-api/backend/corsConfig.js
+3782797445e8200e4269d356ebbf86419376f292db4224225eef89fd8881e2ec       19464  bagan-api/backend/db.js
+eaeef5f77720a758bb7fccf1dbc5f2ca67a8ba05feec56f82a03eaca8456e23b        1068  bagan-api/backend/index.js
+b83c9c91379e90540a18a3949c4de3eed85fd6067c1027bbf8f5099dcea93df5       34256  bagan-api/backend/mediaController.js
+747e2d72c153259287f4656a2b46ea3a4aa3921e33a965b78e615a1a721335f6        3689  bagan-api/backend/mediaRoutes.js
+2c8c06c05e6905efe6f57e56fb2bf39a48bff5ac288937dd13991332d7989257        9644  bagan-api/backend/scripts/bootstrapSuperAdmin.js
+521a61336c822a2de342f6ed9f1cde2a9bace3f8c3373b888fcfc440e9f53412       17883  bagan-api/backend/staffController.js
+cbff2e9ee9e8ef4648b3296d47e6cee7f9e64e2e4b23f17a7c8b2fac802c9883        1613  bagan-api/backend/staffRoutes.js
+f473fe7eadbb82ddf1ab5b5ca17bd6c177a30bc1d06cfe380fa2de66ec34ff6f       28768  bagan-api/backend/tests/stage919CorrectionsTest.js
+bf6bf61761faff887ecb5fe11c780ba8978033e409952bfef77a086b1abc7cbf        9909  database/001_auth_system.sql
+1486a582121012cdd586988c782dc4829f89028a79e06b632797d20922d2d69e        2583  database/002_password_reset_isolation.sql
+ec4802bf9cddf95d12965ade95e3c3b25add2097ade19726eeb849566a64deae        1855  database/003_media_center.sql
+3f42da1200ba262b424ad9570ea571dd3f8b20bca6b877b54032d0c3edecdbf3         756  bagan-api/package.json
+b4b936e0be2fe3c5f602ea4820e2362deb27f9c166ad91bca284b7268491b88e       56069  bagan-api/package-lock.json
+6b2484fd06cfc038b753727ee04ad53a25ecb9bdc98ad75920959b38729870b7       11529  bagan-api/server.js
+d6d1a70f55063e76b7844faaef6a3ca4ee5a9d8f3f983016be0d037d80abe003         920  bagan-api/upload.php
+5bc356782b2dace6e3e117ce848619b34df4a822d5f1a606a8cf8947cee4ef39        1665  bagan-api/.env.example
+8546a33a5f11c6a6ef25c823aabbb80f72b0fab1f7dc98ec87214f27d8280e4e       28566  bagan.medical.cpanel.site/css/styles.css
+e5728176c26e527bbe2093d972909d892dbf14df8c1c4722ddd9c28673eb16f2        7327  bagan.medical.cpanel.site/index.html
+e0abe541a42fec2fc671af9cc9909e935399e7abec26a8e4648f090b5ef503a6       89012  bagan.medical.cpanel.site/js/accounting.js
+c48943f1e5fd7dbd1273a8eb06f2d40340db2b022c52055a8b0ea157048ade97       42447  bagan.medical.cpanel.site/js/accounts-mgmt.js
+c6bf28901ea839b8ea75de0a802119413f508143a81a88f55babd1741c0e46e4       47573  bagan.medical.cpanel.site/js/app.js
+8c83565f88e38289126f0ab6fd8e756ed0852a1a9213892f5aaed0b1349eb1b3      236075  bagan.medical.cpanel.site/js/auth.js
+ef13b9abafb5e5cc5371ff8b2659acdf90ea57a2d6b38670444cd0e084794b32       12043  bagan.medical.cpanel.site/js/dashboard.js
+77bd6d63498478a244cce6bd8664770ae0274fb5197ea3be518c16c16f7e774a      119306  bagan.medical.cpanel.site/js/db.js
+eeed3251ebeb726983106caba517071fc932d338d68e0c8efb2ee68fd8b16824        6159  bagan.medical.cpanel.site/js/icons.js
+d1ea767ca22bda2b9df851390981b150a2e661ff88dd9be5780402a5233871d7       30179  bagan.medical.cpanel.site/js/inventory.js
+c9424f0e17ded89484b538ff69135630a338d5791fe145e28bc8b761be96ab20       41610  bagan.medical.cpanel.site/js/pos.js
+4a59ee537fdf5f2d42c2d97590b61760ecf22e2c773c379d0337201e1740bd51       29927  bagan.medical.cpanel.site/js/treatment.js
+7eef115b233b0412cf3266c0a5e007781778df902cd54df4752e433db8b6aea4         667  bagan.medical.cpanel.site/website_images/default-logo-colored.svg
+edd7b235900a45eb5d5077d60bd3a759e8c32ec13b3708289fdeb6574bb02e8f         339  bagan.medical.cpanel.site/website_images/default-logo-fallback.svg
+d0cf330f67f3c6ea6180a0406c194910883920eaa201046cc2708d509d3bd0e6         707  bagan.medical.cpanel.site/website_images/default-logo-white.svg
+6392f6bf8da7098b2257f0f2ae528586309c3b964acce4b763fa7a201d01f754         824  bagan.medical.cpanel.site/website_images/default-logo.svg
+42f102323b83331fc26cecf67a7d6b9e8785cf61055b3b4e4d8233419d7368a4        3141  bagan.medical.cpanel.site/website_images/images.json
+42f102323b83331fc26cecf67a7d6b9e8785cf61055b3b4e4d8233419d7368a4        3141  bagan.medical.cpanel.site/website_images/manifest.json
+5e0356171ad96c4d4513e7b5e158b5ef30f61aa4bcdddc2a42f0fd0b808dd9db         322  bagan.medical.cpanel.site/website_images/settings.json
+76826112b8b716dc8490c9ddbaf6b2cce63784d39e945043064ef5d6c94964e3       14056  README.md
+3e63fef7a0980e868ebfbc580569786acd596b04ca1c487d082f04907d7b33fa       12449  STAGE_9_2_1_DEPLOYMENT_AND_STAGING_GUIDE.md
+c7f5bbb7b75d4029cdf430013ca24d2cffeefa6cabfc0da957df0637b3c907c0        5188  STAGE_9_2_1_RUNTIME_COMPATIBILITY.md

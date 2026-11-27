@@ -67,10 +67,10 @@ const App = {
         const searchBox = document.getElementById('pos-search-input') || document.getElementById('inv-search-input') || document.getElementById('cust-search-input');
         if (searchBox) searchBox.focus();
       }
-      // Escape -> close top modal
+      // Escape -> close top modal (exempting mandatory unescapable modals)
       else if (e.key === 'Escape') {
         const topModal = document.querySelector('.modal-overlay:last-of-type');
-        if (topModal) topModal.remove();
+        if (topModal && !topModal.classList.contains('unescapable-modal')) topModal.remove();
       }
     });
 
@@ -120,6 +120,12 @@ const App = {
   navigate(viewName) {
     if (!Auth.isLoggedIn()) {
       Auth.showLogin();
+      return;
+    }
+
+    // Block application navigation if first-time password reset is pending
+    if (Auth.currentUser?.mustResetPassword) {
+      Auth.showMustResetPasswordModal();
       return;
     }
 
@@ -462,6 +468,12 @@ const App = {
       }
       sessionStorage.removeItem('bmh_media_admin_session');
     } catch (_) {}
+    if (typeof Auth !== 'undefined' && Auth.authToken) {
+      return Auth.authToken;
+    }
+    if (typeof Auth !== 'undefined' && Auth.isLoggedIn()) {
+      return 'unified_auth_session';
+    }
     return null;
   },
 
@@ -472,91 +484,26 @@ const App = {
   },
 
   async ensureMediaAdminAuth() {
-    if (this.getMediaAdminToken()) return true;
-
-    return new Promise((resolve) => {
-      const old = document.getElementById('bmh-media-login');
-      if (old) old.remove();
-
-      document.body.insertAdjacentHTML('beforeend', `
-        <div id="bmh-media-login" style="position:fixed;inset:0;z-index:10050;background:#0009;display:grid;place-items:center;padding:20px;">
-          <form id="bmh-media-login-form" style="background:white;color:#1e293b;padding:25px;border-radius:12px;width:100%;max-width:380px;box-sizing:border-box;">
-            <h2 style="margin-top:0">Media Administrator Login</h2>
-            <label>Username</label>
-            <input name="username" value="admin" autocomplete="username" required style="display:block;width:100%;box-sizing:border-box;padding:11px;margin:7px 0 15px;">
-            <label>Password</label>
-            <input name="password" type="password" autocomplete="current-password" required style="display:block;width:100%;box-sizing:border-box;padding:11px;margin:7px 0 12px;">
-            <p id="bmh-media-login-error" style="color:#dc2626;font-size:13px;"></p>
-            <div style="display:flex;justify-content:flex-end;gap:10px;">
-              <button type="button" id="bmh-media-login-cancel">Cancel</button>
-              <button type="submit" id="bmh-media-login-submit">Sign in</button>
-            </div>
-          </form>
-        </div>`);
-
-      const modal = document.getElementById('bmh-media-login');
-      const form = document.getElementById('bmh-media-login-form');
-      const error = document.getElementById('bmh-media-login-error');
-      const submit = document.getElementById('bmh-media-login-submit');
-      let finished = false;
-
-      const finish = (ok) => {
-        if (finished) return;
-        finished = true;
-        form.elements.password.value = '';
-        modal.remove();
-        resolve(ok);
-      };
-
-      document.getElementById('bmh-media-login-cancel')
-        .addEventListener('click', () => finish(false));
-
-      form.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        submit.disabled = true;
-        submit.textContent = 'Signing in…';
-        error.textContent = '';
-
-        try {
-          const response = await fetch('/api/admin/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify({
-              username: form.elements.username.value.trim(),
-              password: form.elements.password.value
-            })
-          });
-
-          const data = await response.json().catch(() => ({}));
-          if (!response.ok || data.status !== 'ok' || !data.token) {
-            throw new Error(data.message || 'Login failed. Check your credentials.');
-          }
-
-          const seconds = Number(data.expiresIn) || 28800;
-          sessionStorage.setItem('bmh_media_admin_session', JSON.stringify({
-            token: data.token,
-            expiresAt: Date.now() + seconds * 1000
-          }));
-          finish(true);
-        } catch (err) {
-          error.textContent = err.message || 'Unable to sign in.';
-          form.elements.password.value = '';
-          submit.disabled = false;
-          submit.textContent = 'Sign in';
-        }
-      });
-
-      form.elements.username.focus();
-    });
+    // Unified Authentication: Reuses main application session
+    if (typeof Auth !== 'undefined' && Auth.isLoggedIn()) {
+      return true;
+    }
+    if (typeof Auth !== 'undefined') {
+      Auth.showLogin();
+    }
+    return false;
   },
 
   async mediaAdminFetch(url, options = {}) {
-    const token = this.getMediaAdminToken();
-    if (!token) throw new Error('Media administrator login is required.');
-
     const headers = new Headers(options.headers || {});
-    headers.set('Authorization', 'Bearer ' + token);
+    if (typeof Auth !== 'undefined') {
+      if (Auth.authToken) {
+        headers.set('Authorization', 'Bearer ' + Auth.authToken);
+      }
+      if (Auth.csrfToken) {
+        headers.set('X-CSRF-Token', Auth.csrfToken);
+      }
+    }
 
     const response = await fetch(url, {
       ...options,
@@ -566,7 +513,10 @@ const App = {
 
     if (response.status === 401) {
       this.clearMediaAdminSession();
-      throw new Error('Media administrator session expired. Please sign in again.');
+      if (typeof Auth !== 'undefined') {
+        Auth.logout();
+      }
+      throw new Error('Session expired. Please sign in again.');
     }
     return response;
   },
@@ -690,11 +640,66 @@ const App = {
 
   /* -------------------------------------------------------------
    * DELETE MEDIA FILE THROUGH AUTHENTICATED MEDIA API
+   * Enforces permissions, protected system files & multi-tier references
    * ------------------------------------------------------------- */
   async deleteMediaFile(filename, id = null) {
-    throw new Error(
-      'Permanent media deletion is temporarily disabled to protect images that may still be in use. Your media has not been changed.'
-    );
+    if (!filename) throw new Error('Filename is required for deletion.');
+    const safeName = filename.split('/').pop().split('\\').pop();
+
+    // 1. Permission Check
+    if (typeof Auth !== 'undefined') {
+      const canDelete = Auth.isDeveloper() || Auth.hasPermission('mediaDelete');
+      if (!canDelete) {
+        throw new Error('Access denied: You do not possess the "mediaDelete" permission required to delete media.');
+      }
+    }
+
+    // 2. Client-side Pre-Check: Active Branding & Catalog Protection
+    if (typeof pharmacyDB !== 'undefined' && pharmacyDB.data) {
+      const g = pharmacyDB.data.globalSettings || {};
+      if (g.logoColored && g.logoColored.toLowerCase().includes(safeName.toLowerCase())) {
+        throw new Error(`Deletion blocked: "${safeName}" is currently assigned as the store's Coloured Logo.`);
+      }
+      if (g.logoWhite && g.logoWhite.toLowerCase().includes(safeName.toLowerCase())) {
+        throw new Error(`Deletion blocked: "${safeName}" is currently assigned as the store's White Logo.`);
+      }
+      if (g.fallbackLogoImage && g.fallbackLogoImage.toLowerCase().includes(safeName.toLowerCase())) {
+        throw new Error(`Deletion blocked: "${safeName}" is currently assigned as the store's Fallback Logo.`);
+      }
+
+      // Check medicine catalog
+      const medicines = pharmacyDB.data.medicines || [];
+      const matchedMed = medicines.find(m => m.image && m.image.toLowerCase().includes(safeName.toLowerCase()));
+      if (matchedMed) {
+        throw new Error(`Deletion blocked: "${safeName}" is referenced by medicine "${matchedMed.name}" in catalog.`);
+      }
+    }
+
+    // 3. Call Authenticated Backend API
+    const deleteUrl = id 
+      ? `/api/admin/media/${encodeURIComponent(id)}` 
+      : `/api/admin/media?action=delete&filename=${encodeURIComponent(safeName)}`;
+
+    const response = await this.mediaAdminFetch(deleteUrl, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: safeName, id }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.status !== 'ok') {
+      throw new Error(data.message || 'Server rejected media deletion.');
+    }
+
+    // 4. Update local pharmacyDB and BaganMediaStore
+    if (typeof pharmacyDB !== 'undefined' && pharmacyDB.deleteMediaItem) {
+      pharmacyDB.deleteMediaItem(safeName);
+    }
+    if (typeof BaganMediaStore !== 'undefined' && BaganMediaStore.deleteMedia) {
+      try { await BaganMediaStore.deleteMedia(safeName); } catch (_) {}
+    }
+
+    return { success: true, message: data.message || `File ${safeName} deleted successfully.` };
   },
 
   /* -------------------------------------------------------------
